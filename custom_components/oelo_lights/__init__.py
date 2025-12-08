@@ -58,17 +58,21 @@ async def _install_lovelace_card(hass: HomeAssistant) -> None:
         # Create www directory if it doesn't exist
         www_dir.mkdir(parents=True, exist_ok=True)
         
-        # Copy card if source exists
+        # Copy card if source exists (use executor to avoid blocking I/O)
         card_installed = False
         if card_source.exists():
-            if not card_dest.exists():
-                shutil.copy2(card_source, card_dest)
-                card_installed = True
-                _LOGGER.info("Lovelace card installed to %s", card_dest)
-            elif card_source.stat().st_mtime > card_dest.stat().st_mtime:
-                shutil.copy2(card_source, card_dest)
-                card_installed = True
-                _LOGGER.info("Lovelace card updated at %s", card_dest)
+            def _copy_card():
+                if not card_dest.exists():
+                    shutil.copy2(card_source, card_dest)
+                    return True
+                elif card_source.stat().st_mtime > card_dest.stat().st_mtime:
+                    shutil.copy2(card_source, card_dest)
+                    return True
+                return False
+            
+            card_installed = await hass.async_add_executor_job(_copy_card)
+            if card_installed:
+                _LOGGER.info("Lovelace card installed/updated at %s", card_dest)
         
         # Try to register as Lovelace resource (always try if card exists)
         if card_dest.exists():
@@ -174,7 +178,7 @@ async def _add_card_to_dashboard(hass: HomeAssistant, entry: ConfigEntry) -> Non
             # Try to get dashboard storage
             try:
                 storage = LovelaceStorage(hass, None)
-                config = await storage.async_load()
+                config = await storage.async_load(force=False)
                 
                 if not config:
                     _LOGGER.warning("Dashboard config is None - cannot add pattern management card")
