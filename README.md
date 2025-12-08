@@ -39,7 +39,7 @@ Settings → Devices & Services → Add Integration → Search "oleo_lights_ha" 
 **Required:**
 - **Controller IP Address** - IPv4 address of Oelo controller on local network
 
-Integration validates IP and creates entities for all zones (1-6) with default settings. Lovelace card is automatically installed and registered during setup.
+Integration validates IP and creates entities for all zones (1-6) with default settings. Pattern management card is automatically added to Overview dashboard during setup.
 
 ### Configure Options (After Setup)
 
@@ -101,17 +101,18 @@ Each zone is a light entity (`light.oelo_lights_zone_1`, etc.). Control via UI, 
 
 ### Accessing Pattern Management
 
-**1. Dashboard Card** - Auto-added to dashboard. Buttons: Capture, Apply, Rename, Delete.
+**Pattern Application (Apply):**
+- **Light Entity UI** - Click zone entity → Effect dropdown (shows captured patterns only)
 
-**2. Light Entity** - Click zone entity → Effect dropdown (shows captured patterns only).
-
-**3. Developer Tools → Services** - Search `oelo_lights` services for automations/scripts.
+**Pattern Management (Capture, Rename, Delete):**
+- **Dashboard Card** - Automatically added to Overview dashboard during setup/reload. Provides buttons for Capture, Apply, Rename, Delete. Replaces any existing zones card if present.
+- **Developer Tools → Services** - Settings → Developer Tools → Services → Search `oelo_lights` → Use `capture_effect`, `rename_effect`, `delete_effect` services
 
 ### Effect Workflow
 
 1. **Create pattern in Oelo app** (zone must be ON)
-2. **Capture**: Dashboard card "Capture Pattern" button or `oelo_lights.capture_effect` service
-3. **Apply**: Dashboard card "Apply" button, Effect dropdown, or `oelo_lights.apply_effect` service
+2. **Capture**: Dashboard card "Capture Pattern" button (auto-added) or Developer Tools → Services → `oelo_lights.capture_effect`
+3. **Apply**: Effect dropdown in light entity UI, dashboard card "Apply" button, or `oelo_lights.apply_effect` service
 
 ### Services
 

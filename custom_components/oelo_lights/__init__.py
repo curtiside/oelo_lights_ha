@@ -24,7 +24,7 @@ from pathlib import Path
 from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigEntry
 
-from .const import DOMAIN
+from .const import DOMAIN, DEFAULT_ZONES, CONF_ZONES
 from .services import async_register_services
 
 _LOGGER = logging.getLogger(__name__)
@@ -39,6 +39,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up the Oelo Lights integration from a config entry."""
     # Copy Lovelace card and register resource when integration is added
     await _install_lovelace_card(hass)
+    
+    # Try to add card to dashboard automatically
+    await _add_card_to_dashboard(hass, entry)
     
     await hass.config_entries.async_forward_entry_setups(entry, ["light"])
     return True
@@ -140,6 +143,93 @@ async def _register_lovelace_resource(hass: HomeAssistant) -> None:
         _LOGGER.warning("Lovelace API not available: %s. Add resource manually: Settings → Dashboards → Resources", e)
     except Exception as e:
         _LOGGER.warning("Could not register Lovelace resource: %s. Add manually: Settings → Dashboards → Resources", e)
+
+async def _add_card_to_dashboard(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Try to automatically add pattern management card to dashboard."""
+    try:
+        # Wait for Lovelace to be available
+        max_attempts = 10
+        for attempt in range(max_attempts):
+            if "lovelace" in hass.config.components:
+                break
+            await asyncio.sleep(1)
+        
+        if "lovelace" not in hass.config.components:
+            _LOGGER.debug("Lovelace not available, card will need manual addition")
+            return
+        
+        # Try to access Lovelace config storage
+        try:
+            from homeassistant.components.lovelace import _load_yaml, _load_config
+            from homeassistant.components.lovelace.dashboard import LovelaceStorage
+            
+            # Get first zone entity ID
+            zones = entry.options.get(CONF_ZONES, DEFAULT_ZONES)
+            if not zones:
+                zones = DEFAULT_ZONES
+            first_zone = zones[0] if isinstance(zones, list) else DEFAULT_ZONES[0]
+            entity_id = f"light.{DOMAIN}_zone_{first_zone}"
+            
+            # Try to get dashboard storage
+            try:
+                storage = LovelaceStorage(hass, None)
+                config = await storage.async_load()
+                
+                if config and isinstance(config, dict):
+                    views = config.get("views", [])
+                    if not views:
+                        views = [{"title": "Home", "path": "home", "cards": []}]
+                    
+                    # Check if pattern card exists, or if there's an old zones card to replace
+                    pattern_card_exists = False
+                    zones_card_index = None
+                    zones_card_view = None
+                    
+                    for view_idx, view in enumerate(views):
+                        cards = view.get("cards", [])
+                        for card_idx, card in enumerate(cards):
+                            if card.get("type") == "custom:oelo-patterns-card":
+                                pattern_card_exists = True
+                                break
+                            # Check for old zones card (entities card showing zones)
+                            if card.get("type") == "entities" and "oleo" in str(card.get("entities", [])).lower():
+                                zones_card_index = card_idx
+                                zones_card_view = view_idx
+                        if pattern_card_exists:
+                            break
+                    
+                    if not pattern_card_exists:
+                        card_config = {
+                            "type": "custom:oelo-patterns-card",
+                            "entity": entity_id,
+                            "title": "Oelo Patterns"
+                        }
+                        
+                        # Replace old zones card if found, otherwise add to first view
+                        if zones_card_view is not None and zones_card_index is not None:
+                            views[zones_card_view]["cards"][zones_card_index] = card_config
+                            _LOGGER.info("✓ Pattern management card replaced old zones card")
+                        else:
+                            # Add to first view (Overview)
+                            if "cards" not in views[0]:
+                                views[0]["cards"] = []
+                            views[0]["cards"].append(card_config)
+                            _LOGGER.info("✓ Pattern management card added to Overview dashboard")
+                        
+                        config["views"] = views
+                        await storage.async_save(config)
+                        return
+                    else:
+                        _LOGGER.debug("Pattern management card already exists in dashboard")
+                        return
+            except Exception as e:
+                _LOGGER.debug("Could not access dashboard storage: %s", e)
+                return
+        except ImportError:
+            _LOGGER.debug("Lovelace storage API not available")
+            return
+    except Exception as e:
+        _LOGGER.debug("Could not auto-add card to dashboard: %s", e)
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
