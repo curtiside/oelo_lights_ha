@@ -1,24 +1,13 @@
 """Services for Oelo Lights integration.
 
-Provides service calls for pattern/effect management:
-- capture_effect: Capture current pattern from controller
-- apply_effect: Apply saved pattern to zone
-- rename_effect: Rename saved pattern
-- delete_effect: Delete saved pattern
-- list_effects: List all saved patterns
-- on_and_apply_effect: Turn on and apply pattern in one action
+Services: capture_effect, apply_effect, rename_effect, delete_effect,
+list_effects, on_and_apply_effect.
 
-**Pattern Workflow:**
-1. User creates/sets pattern in Oelo app
-2. capture_effect: Captures pattern from controller (zone must be ON)
-3. rename_effect: (Optional) Rename for easier identification
-4. apply_effect: Apply to any zone
+Workflow: Create pattern in Oelo app → capture_effect (zone must be ON) →
+rename_effect (optional) → apply_effect to any zone.
 
-**Service Parameters:**
-- Services use "effect" terminology for Home Assistant consistency
-- Backward compatible: Also accepts "pattern_name"/"pattern_id"
-- entity_id: Identifies which zone (extracted from entity_id format)
-- Patterns are shared: Same pattern list for all zones
+Uses "effect" terminology (backward compatible with "pattern_name"/"pattern_id").
+Patterns shared across all zones.
 """
 
 from __future__ import annotations

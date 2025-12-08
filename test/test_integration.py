@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Test script for Oelo Lights integration.
+"""Integration tests for Oelo Lights Home Assistant integration.
 
-Quick Start Testing Guide
-==========================
+Validates: controller connectivity, module imports, config flow, pattern utils,
+services, pattern storage.
 
-This script provides automated tests for the Oelo Lights integration. For manual testing
-using Docker Compose, see the setup instructions below.
+Quick Start:
+    make setup && make start
+    docker-compose exec homeassistant python3 /config/test/test_integration.py
 
 Prerequisites
 -------------
@@ -83,11 +84,17 @@ Manual Testing Steps
      - Settings → Dashboards → Resources → + Add Resource
      - URL: /local/oelo-patterns-card-simple.js
      - Type: JavaScript Module → Create
-   - Add card to dashboard: Edit dashboard → + Add Card → Manual
-   - Configuration:
-     type: custom:oelo-patterns-card
-     entity: light.oelo_lights_zone_1
-     title: My Oelo Patterns
+   - Add card to dashboard:
+     * Go to your dashboard (Overview or any dashboard page)
+     * Click the three dots menu (⋮) in the top right corner
+     * Select "Edit Dashboard"
+     * Click the "+" button (Add Card) at the bottom right
+     * Scroll down and click "Manual" card type
+     * Paste this YAML configuration:
+       type: custom:oelo-patterns-card
+       entity: light.oelo_lights_zone_1
+       title: My Oelo Patterns
+     * Click "Save"
    - Set pattern on Oelo controller (zone must be ON)
    - Click "Capture Pattern" button in card
    - Enter name: "My Test Pattern"
@@ -155,6 +162,7 @@ Integration not appearing:
     - Verify files are copied: ls -la config/custom_components/oelo_lights/
     - Check logs for import errors: docker-compose logs homeassistant | grep -i oelo
     - Verify integration loads: docker-compose exec homeassistant python3 -c "import sys; sys.path.insert(0, '/config/custom_components'); import oelo_lights"
+    - Run tests: docker-compose exec homeassistant python3 /config/test/test_integration.py
     - Restart container: make restart
 
 Effect capture fails:
@@ -179,14 +187,14 @@ This script runs automated tests that validate core functionality:
     - Pattern storage
 
 Run this script directly:
-    python3 test_integration.py
+    python3 test/test_integration.py
 
 Or run inside Docker container:
-    docker-compose exec homeassistant python3 /config/test_integration.py
+    docker-compose exec homeassistant python3 /config/test/test_integration.py
 
 More Information
 ----------------
-- Workflow Tests: See test_workflow.py for capture → rename → apply workflow tests
+- Workflow Tests: See test/test_workflow.py for capture → rename → apply workflow tests
 """
 
 import asyncio
@@ -200,12 +208,24 @@ HA_URL = "http://localhost:8123"
 
 
 async def test_controller_connectivity():
-    """Test if controller is reachable."""
+    """Test controller connectivity and zone enumeration.
+    
+    Validates:
+    - Controller is reachable at CONTROLLER_IP
+    - Controller returns valid JSON response
+    - Response contains zone data
+    - At least one zone is present
+    
+    Returns:
+        bool: True if controller is reachable and returns valid data
+    """
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(f"http://{CONTROLLER_IP}/getController", timeout=aiohttp.ClientTimeout(total=5)) as resp:
                 if resp.status == 200:
-                    data = await resp.json()
+                    # Controller returns text/json, so parse manually
+                    text = await resp.text()
+                    data = json.loads(text)
                     print(f"✓ Controller connectivity: OK ({len(data)} zones)")
                     return True
                 else:
@@ -217,11 +237,20 @@ async def test_controller_connectivity():
 
 
 async def test_integration_import():
-    """Test if integration can be imported."""
+    """Test integration module imports.
+    
+    Validates:
+    - Main integration module can be imported
+    - All required submodules are importable
+    - Module structure is correct
+    
+    Returns:
+        bool: True if all imports succeed
+    """
     try:
         import sys
         import os
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'custom_components'))
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'custom_components'))
         import oelo_lights
         from oelo_lights import const, config_flow, services, pattern_storage, pattern_utils
         print("✓ Integration import: OK")
@@ -232,11 +261,19 @@ async def test_integration_import():
 
 
 async def test_config_flow_validation():
-    """Test config flow validation logic."""
+    """Test configuration flow validation function.
+    
+    Validates:
+    - validate_input function exists and is callable
+    - Config flow module structure is correct
+    
+    Returns:
+        bool: True if config flow validation is available
+    """
     try:
         import sys
         import os
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'custom_components'))
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'custom_components'))
         from oelo_lights.config_flow import validate_input
         print("✓ Config flow: OK")
         return True
@@ -246,11 +283,21 @@ async def test_config_flow_validation():
 
 
 async def test_pattern_utils():
-    """Test pattern utility functions."""
+    """Test pattern utility functions.
+    
+    Validates:
+    - Pattern ID generation works correctly
+    - LED index normalization functions properly
+    - Pattern extraction from zone data succeeds
+    - Extracted pattern has required fields (id, name, plan_type)
+    
+    Returns:
+        bool: True if all utility functions work correctly
+    """
     try:
         import sys
         import os
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'custom_components'))
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'custom_components'))
         from oelo_lights.pattern_utils import (
             generate_pattern_id,
             normalize_led_indices,
@@ -294,11 +341,20 @@ async def test_pattern_utils():
 
 
 async def test_services():
-    """Test service registration."""
+    """Test service registration and constants.
+    
+    Validates:
+    - Service registration function exists
+    - All service name constants are defined
+    - Service module structure is correct
+    
+    Returns:
+        bool: True if services module is properly structured
+    """
     try:
         import sys
         import os
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'custom_components'))
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'custom_components'))
         from oelo_lights.services import async_register_services
         from oelo_lights.const import (
             SERVICE_CAPTURE_EFFECT,
@@ -315,24 +371,38 @@ async def test_services():
 
 
 async def test_pattern_storage():
-    """Test pattern storage."""
+    """Test pattern storage class interface.
+    
+    Validates:
+    - PatternStorage class exists and is importable
+    - All required methods are present:
+      - async_load, async_save
+      - async_add_pattern, async_get_pattern
+      - async_rename_pattern, async_delete_pattern
+      - async_list_patterns
+    
+    Note: This test validates the interface only, not actual storage
+    functionality (which requires a real HomeAssistant instance).
+    
+    Returns:
+        bool: True if PatternStorage class has expected interface
+    """
     try:
         import sys
         import os
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'custom_components'))
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'custom_components'))
         from oelo_lights.pattern_storage import PatternStorage
         
-        class MockHass:
-            pass
-        
-        storage = PatternStorage(MockHass(), "test_entry")
-        assert hasattr(storage, 'async_load')
-        assert hasattr(storage, 'async_save')
-        assert hasattr(storage, 'async_add_pattern')
-        assert hasattr(storage, 'async_get_pattern')
-        assert hasattr(storage, 'async_rename_pattern')
-        assert hasattr(storage, 'async_delete_pattern')
-        assert hasattr(storage, 'async_list_patterns')
+        # Just verify the class exists and has expected methods
+        # Full initialization requires real HomeAssistant instance
+        assert hasattr(PatternStorage, '__init__')
+        assert hasattr(PatternStorage, 'async_load')
+        assert hasattr(PatternStorage, 'async_save')
+        assert hasattr(PatternStorage, 'async_add_pattern')
+        assert hasattr(PatternStorage, 'async_get_pattern')
+        assert hasattr(PatternStorage, 'async_rename_pattern')
+        assert hasattr(PatternStorage, 'async_delete_pattern')
+        assert hasattr(PatternStorage, 'async_list_patterns')
         print("✓ Pattern storage: OK")
         return True
     except Exception as e:
@@ -341,7 +411,13 @@ async def test_pattern_storage():
 
 
 async def main():
-    """Run all tests."""
+    """Run all integration tests.
+    
+    Executes all test functions and reports results.
+    
+    Returns:
+        int: Exit code (0 for success, 1 for failure)
+    """
     print("Oelo Lights Integration Tests")
     print("-" * 40)
     

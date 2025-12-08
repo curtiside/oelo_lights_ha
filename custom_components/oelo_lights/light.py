@@ -1,22 +1,9 @@
-"""Light platform for the Oelo Lights integration.
+"""Light platform for Oelo Lights integration.
 
-Provides light entities for each Oelo Lights zone.
+Provides light entities per zone. Features: dynamic effect list (captured patterns),
+RGB/brightness control, automatic pattern updates, spotlight plan support.
 
-**Key Features:**
-- Dynamic effect list (shows only captured patterns from controller)
-- Pattern application via effect attribute (Home Assistant native)
-- RGB color and brightness control
-- Automatic pattern updates when patterns are captured/renamed/deleted
-- Spotlight plan support (handles 40-LED controller limitation)
-
-**Pattern Workflow:**
-- Patterns are created in Oelo app, then captured in Home Assistant
-- Captured patterns appear in effect list for all zones
-- Apply patterns via effect dropdown or service calls
-
-**Refresh:**
-- Use standard `homeassistant.update_entity` service
-- Entity implements `async_update()` for coordinator refresh
+Refresh: Use homeassistant.update_entity service or entity async_update().
 """
 
 from __future__ import annotations

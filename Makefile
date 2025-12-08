@@ -14,7 +14,7 @@ help:
 
 setup:
 	@echo "Setting up test environment..."
-	@mkdir -p config/custom_components
+	@mkdir -p config/custom_components config/test
 	@if [ ! -d "config/custom_components/oelo_lights" ]; then \
 		echo "Copying integration files..."; \
 		cp -r custom_components/oelo_lights config/custom_components/; \
@@ -22,6 +22,9 @@ setup:
 	else \
 		echo "✓ Integration files already exist"; \
 	fi
+	@echo "Copying test files..."; \
+	cp -r test/* config/test/ 2>/dev/null || true; \
+	echo "✓ Test files copied"
 	@if [ ! -f ".env" ]; then \
 		echo "Creating .env file from template..."; \
 		cp .env.example .env; \

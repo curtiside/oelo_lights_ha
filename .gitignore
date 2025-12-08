@@ -2,6 +2,9 @@
 config/
 .env
 
+# Test files (keep source, ignore copied)
+config/test/
+
 # Python
 __pycache__/
 *.py[cod]

@@ -1,19 +1,8 @@
-"""Pattern storage helper for Oelo Lights integration.
+"""Pattern storage for Oelo Lights integration.
 
-Manages persistent storage of captured patterns using Home Assistant's Store class.
-Patterns are shared across all zones for a controller.
-
-**Storage Details:**
-- Location: `{DOMAIN}_patterns_{entry_id}.json`
-- Shared across all zones (capture once, apply to any zone)
-- Up to 200 patterns per controller
-- Pattern structure: id, name, url_params, plan_type, original_colors
-
-**Pattern Sharing:**
-Patterns are stored at the controller level, not per zone. This means:
-- Capture a pattern from zone 1 → Available to all zones
-- Rename a pattern → Affects all zones
-- Delete a pattern → Removed from all zones
+Manages persistent storage using Home Assistant Store. Patterns shared across
+all zones per controller. Storage: {DOMAIN}_patterns_{entry_id}.json (max 200).
+Pattern structure: id, name, url_params, plan_type, original_colors.
 """
 
 from __future__ import annotations

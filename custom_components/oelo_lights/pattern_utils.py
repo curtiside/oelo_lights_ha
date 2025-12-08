@@ -1,18 +1,11 @@
 """Pattern utility functions for Oelo Lights integration.
 
-This module provides utilities for:
-- Pattern ID generation (stable identifiers matching Hubitat algorithm)
-- LED index normalization
-- Spotlight plan color reconstruction (handles 40-LED controller limitation)
-- Pattern URL building
-- Pattern extraction from controller zone data
+Utilities: pattern ID generation (Hubitat-compatible), LED normalization,
+spotlight plan color reconstruction, URL building, pattern extraction.
 
-**Spotlight Plan Handling (CRITICAL):**
-The Oelo controller `/getController` endpoint only returns 40 LEDs worth of data,
-but zones can have up to 500 LEDs. Spotlight plans require special handling:
-- During capture: Store original colors (limited to 40 LEDs) separately
-- During application: Reconstruct full LED array using Spotlight Plan Lights config
-- Only specified LEDs are lit, all others set to (0,0,0)
+Spotlight Plan (CRITICAL): Controller returns only 40 LEDs, zones up to 500.
+Capture: store original colors separately. Apply: reconstruct full array using
+Spotlight Plan Lights config (only specified LEDs lit, others off).
 """
 
 from __future__ import annotations

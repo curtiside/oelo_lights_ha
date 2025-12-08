@@ -1,21 +1,7 @@
-"""Config flow for Oelo Lights.
+"""Config flow for Oelo Lights integration.
 
-Handles initial setup and options flow for Oelo Lights integration.
-
-**Config Flow:**
-- Initial setup: IP address entry with validation
-- Options flow: Reconfiguration of all settings (zones, polling, spotlight, verification, advanced)
-
-**Configuration Options:**
-- IP Address (required)
-- Zones (multi-select, 1-6)
-- Poll Interval (10-3600 seconds)
-- Auto Poll (toggle)
-- Spotlight Plan Lights (LED indices)
-- Max LEDs (1-500)
-- Command Verification (optional, disabled by default)
-- Command Timeout (5-30 seconds)
-- Debug Logging (toggle)
+Handles initial setup (IP validation) and options flow (zones, polling, spotlight,
+verification, advanced settings).
 """
 
 from __future__ import annotations
@@ -255,7 +241,13 @@ class OeloLightsOptionsFlowHandler(OptionsFlow):
 
     def __init__(self, config_entry: ConfigEntry) -> None:
         """Initialize options flow."""
-        self.config_entry = config_entry
+        super().__init__()
+        self._config_entry = config_entry
+    
+    @property
+    def config_entry(self) -> ConfigEntry:
+        """Return the config entry."""
+        return self._config_entry
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None

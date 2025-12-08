@@ -1,40 +1,25 @@
-"""Support for Oelo Lights.
+"""Oelo Lights Home Assistant integration.
 
-Oelo Lights Home Assistant Integration
+Controls Oelo Lights controllers via HTTP REST API. Supports multi-zone control,
+effect capture/storage/management, spotlight plan handling (40-LED limitation).
 
-This integration provides control for Oelo Lights controllers via HTTP REST API.
-Supports multi-zone control, effect capture, storage, and management.
+Protocol:
+    GET http://{IP}/getController - Returns zone statuses (JSON array)
+    GET http://{IP}/setPattern?patternType={type}&zones={zone}&... - Sets pattern
 
-## Protocol
+Workflow:
+    1. Create/set pattern in Oelo app
+    2. Capture in HA (stores for reuse, shared across zones)
+    3. Rename (optional)
+    4. Apply to any zone
 
-**Base URL:** `http://{IP_ADDRESS}/`
-
-**Endpoints:**
-- `GET /getController` - Returns JSON array of zone statuses
-- `GET /setPattern?patternType={type}&zones={zone}&...` - Sets pattern/color for zones
-
-**Key Features:**
-- Pattern capture from controller (patterns created in Oelo app first)
-- Pattern storage (shared across all zones, up to 200 patterns)
-- Pattern renaming and management
-- Spotlight plan support (handles 40-LED controller limitation)
-- Effect list integration (Home Assistant native)
-
-**Pattern Workflow:**
-1. Create/set pattern in Oelo app
-2. Capture pattern in Home Assistant (stores for reuse)
-3. Rename pattern (optional)
-4. Apply pattern to any zone
-
-**Storage:**
-- Patterns stored per controller (shared across zones)
-- Storage location: `{DOMAIN}_patterns_{entry_id}.json`
-- Pattern structure includes: id, name, url_params, plan_type, original_colors
+Storage: {DOMAIN}_patterns_{entry_id}.json (up to 200 patterns per controller)
 """
 
 from __future__ import annotations
 import shutil
 import logging
+import asyncio
 from pathlib import Path
 from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigEntry
@@ -48,14 +33,13 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Set up the Oelo Lights integration."""
     # Register services
     async_register_services(hass)
-    
-    # Copy Lovelace card to www directory if it doesn't exist
-    await _install_lovelace_card(hass)
-    
     return True
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up the Oelo Lights integration from a config entry."""
+    # Copy Lovelace card and register resource when integration is added
+    await _install_lovelace_card(hass)
+    
     await hass.config_entries.async_forward_entry_setups(entry, ["light"])
     return True
 
@@ -83,8 +67,11 @@ async def _install_lovelace_card(hass: HomeAssistant) -> None:
                 card_installed = True
                 _LOGGER.info("Lovelace card updated at %s", card_dest)
         
-        # Try to register as Lovelace resource
-        if card_installed or card_dest.exists():
+        # Try to register as Lovelace resource (always try if card exists)
+        if card_dest.exists():
+            _LOGGER.info("Card file exists, attempting to register Lovelace resource...")
+            await _register_lovelace_resource(hass)
+        elif card_installed:
             await _register_lovelace_resource(hass)
             
     except Exception as e:
@@ -92,21 +79,27 @@ async def _install_lovelace_card(hass: HomeAssistant) -> None:
         _LOGGER.warning("Could not install Lovelace card: %s", e)
 
 async def _register_lovelace_resource(hass: HomeAssistant) -> None:
-    """Register Lovelace card as a resource."""
+    """Register Lovelace card as a resource automatically."""
     try:
-        # Check if Lovelace is available
+        # Wait for Lovelace to be available
+        max_attempts = 10
+        for attempt in range(max_attempts):
+            if "lovelace" in hass.config.components:
+                break
+            await asyncio.sleep(1)
+        
         if "lovelace" not in hass.config.components:
-            _LOGGER.debug("Lovelace not loaded yet, resource will be registered when available")
+            _LOGGER.warning("Lovelace not available, card resource will need manual registration")
             return
         
-        # Try to get Lovelace resources
-        from homeassistant.components.lovelace.resources import ResourceStorage
+        # Try multiple methods to register the resource
+        resource_url = "/local/oelo-patterns-card-simple.js"
+        resource_type = "module"
         
-        # Get the default dashboard
+        # Method 1: Use ResourceStorage API
         try:
+            from homeassistant.components.lovelace.resources import ResourceStorage
             resources = ResourceStorage(hass)
-            resource_url = "/local/oelo-patterns-card-simple.js"
-            resource_type = "module"
             
             # Check if resource already exists
             existing_resources = await resources.async_get_info()
@@ -115,25 +108,38 @@ async def _register_lovelace_resource(hass: HomeAssistant) -> None:
             )
             
             if not resource_exists:
-                # Register the resource
                 await resources.async_create_item({
                     "type": resource_type,
                     "url": resource_url,
                 })
-                _LOGGER.info("Lovelace card resource registered automatically")
+                _LOGGER.info("✓ Lovelace card resource registered automatically")
+                return
             else:
                 _LOGGER.debug("Lovelace card resource already registered")
+                return
         except Exception as e:
-            # Resource registration failed, but that's okay - user can add manually
-            _LOGGER.debug("Could not auto-register Lovelace resource: %s. User can add manually at Settings → Dashboards → Resources", e)
-            _LOGGER.info("To use the Oelo Patterns card, add resource: /local/oelo-patterns-card-simple.js (JavaScript Module)")
+            _LOGGER.debug("ResourceStorage method failed: %s", e)
+        
+        # Method 2: Use frontend component to load globally (works without resource registration)
+        try:
+            # This loads the JS globally, making the card available without manual resource addition
+            from homeassistant.components.frontend import add_extra_js_url
+            add_extra_js_url(hass, resource_url, es5=False)
+            _LOGGER.info("✓ Lovelace card loaded automatically via frontend component")
+            return
+        except ImportError:
+            # Frontend component not available
+            pass
+        except Exception as e:
+            _LOGGER.debug("Frontend component method failed: %s", e)
+        
+        # If all methods fail, log instructions
+        _LOGGER.warning("Could not auto-register Lovelace resource. Add manually: Settings → Dashboards → Resources → URL: %s, Type: %s", resource_url, resource_type)
             
-    except ImportError:
-        # Lovelace resources API not available in this HA version
-        _LOGGER.info("To use the Oelo Patterns card, add resource: /local/oelo-patterns-card-simple.js (JavaScript Module) at Settings → Dashboards → Resources")
+    except ImportError as e:
+        _LOGGER.warning("Lovelace API not available: %s. Add resource manually: Settings → Dashboards → Resources", e)
     except Exception as e:
-        _LOGGER.debug("Could not register Lovelace resource: %s", e)
-        _LOGGER.info("To use the Oelo Patterns card, add resource: /local/oelo-patterns-card-simple.js (JavaScript Module) at Settings → Dashboards → Resources")
+        _LOGGER.warning("Could not register Lovelace resource: %s. Add manually: Settings → Dashboards → Resources", e)
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
