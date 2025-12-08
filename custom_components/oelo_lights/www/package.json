@@ -1,0 +1,27 @@
+{
+  "name": "oelo-patterns-card",
+  "version": "1.0.0",
+  "description": "Custom Lovelace card for managing Oelo light patterns",
+  "main": "oelo-patterns-card.js",
+  "scripts": {
+    "build": "tsc && webpack",
+    "watch": "tsc --watch"
+  },
+  "keywords": [
+    "home-assistant",
+    "lovelace",
+    "custom-card",
+    "oelo",
+    "lights"
+  ],
+  "author": "Curtis Ide",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^18.0.0",
+    "typescript": "^5.0.0",
+    "webpack": "^5.0.0",
+    "ts-loader": "^9.0.0",
+    "lit-element": "^3.0.0",
+    "custom-card-helpers": "^1.0.0"
+  }
+}

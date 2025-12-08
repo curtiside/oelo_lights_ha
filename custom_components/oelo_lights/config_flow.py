@@ -1,4 +1,22 @@
-"""Config flow for Oelo Lights."""
+"""Config flow for Oelo Lights.
+
+Handles initial setup and options flow for Oelo Lights integration.
+
+**Config Flow:**
+- Initial setup: IP address entry with validation
+- Options flow: Reconfiguration of all settings (zones, polling, spotlight, verification, advanced)
+
+**Configuration Options:**
+- IP Address (required)
+- Zones (multi-select, 1-6)
+- Poll Interval (10-3600 seconds)
+- Auto Poll (toggle)
+- Spotlight Plan Lights (LED indices)
+- Max LEDs (1-500)
+- Command Verification (optional, disabled by default)
+- Command Timeout (5-30 seconds)
+- Debug Logging (toggle)
+"""
 
 from __future__ import annotations
 import logging
@@ -8,13 +26,39 @@ import ipaddress
 import asyncio  
 import aiohttp  
 
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import ConfigFlow, ConfigFlowResult, OptionsFlow, ConfigEntry
 from homeassistant.const import CONF_IP_ADDRESS
 from homeassistant.helpers.aiohttp_client import async_get_clientsession 
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant import data_entry_flow
+import homeassistant.helpers.config_validation as cv
 
-from .const import DOMAIN
+from .const import (
+    DOMAIN,
+    CONF_ZONES,
+    CONF_POLL_INTERVAL,
+    CONF_AUTO_POLL,
+    CONF_COMMAND_TIMEOUT,
+    CONF_DEBUG_LOGGING,
+    CONF_MAX_LEDS,
+    CONF_SPOTLIGHT_PLAN_LIGHTS,
+    CONF_VERIFY_COMMANDS,
+    CONF_VERIFICATION_RETRIES,
+    CONF_VERIFICATION_DELAY,
+    CONF_VERIFICATION_TIMEOUT,
+    DEFAULT_POLL_INTERVAL,
+    DEFAULT_AUTO_POLL,
+    DEFAULT_COMMAND_TIMEOUT,
+    DEFAULT_DEBUG_LOGGING,
+    DEFAULT_MAX_LEDS,
+    DEFAULT_SPOTLIGHT_PLAN_LIGHTS,
+    DEFAULT_VERIFY_COMMANDS,
+    DEFAULT_VERIFICATION_RETRIES,
+    DEFAULT_VERIFICATION_DELAY,
+    DEFAULT_VERIFICATION_TIMEOUT,
+    DEFAULT_ZONES,
+)
+from .pattern_utils import normalize_led_indices
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -90,6 +134,12 @@ class OeloLightsConfigFlow(ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
+        """Get the options flow for this handler."""
+        return OeloLightsOptionsFlowHandler(config_entry)
+
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -102,7 +152,24 @@ class OeloLightsConfigFlow(ConfigFlow, domain=DOMAIN):
                 await self.async_set_unique_id(user_input[CONF_IP_ADDRESS], raise_on_progress=False)
                 self._abort_if_unique_id_configured()
 
-                return self.async_create_entry(title=info["title"], data=user_input)
+                # Set default options
+                return self.async_create_entry(
+                    title=info["title"],
+                    data=user_input,
+                    options={
+                        CONF_ZONES: DEFAULT_ZONES,
+                        CONF_POLL_INTERVAL: DEFAULT_POLL_INTERVAL,
+                        CONF_AUTO_POLL: DEFAULT_AUTO_POLL,
+                        CONF_COMMAND_TIMEOUT: DEFAULT_COMMAND_TIMEOUT,
+                        CONF_DEBUG_LOGGING: DEFAULT_DEBUG_LOGGING,
+                        CONF_MAX_LEDS: DEFAULT_MAX_LEDS,
+                        CONF_SPOTLIGHT_PLAN_LIGHTS: DEFAULT_SPOTLIGHT_PLAN_LIGHTS,
+                        CONF_VERIFY_COMMANDS: DEFAULT_VERIFY_COMMANDS,
+                        CONF_VERIFICATION_RETRIES: DEFAULT_VERIFICATION_RETRIES,
+                        CONF_VERIFICATION_DELAY: DEFAULT_VERIFICATION_DELAY,
+                        CONF_VERIFICATION_TIMEOUT: DEFAULT_VERIFICATION_TIMEOUT,
+                    }
+                )
 
             except InvalidIP:
                 errors["base"] = "invalid_ip"
@@ -181,3 +248,91 @@ class OeloLightsConfigFlow(ConfigFlow, domain=DOMAIN):
             data_schema=vol.Schema({vol.Required(CONF_IP_ADDRESS, default=config_entry.data.get(CONF_IP_ADDRESS)): str}),
             errors=errors,
         )
+
+
+class OeloLightsOptionsFlowHandler(OptionsFlow):
+    """Handle options flow for Oelo Lights."""
+
+    def __init__(self, config_entry: ConfigEntry) -> None:
+        """Initialize options flow."""
+        self.config_entry = config_entry
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Manage the options."""
+        if user_input is not None:
+            # Convert zone strings to integers
+            if CONF_ZONES in user_input:
+                zones = user_input[CONF_ZONES]
+                if isinstance(zones, list):
+                    user_input[CONF_ZONES] = [int(z) for z in zones if str(z).isdigit()]
+                elif isinstance(zones, str) and zones.isdigit():
+                    user_input[CONF_ZONES] = [int(zones)]
+            
+            # Normalize spotlight plan lights
+            if CONF_SPOTLIGHT_PLAN_LIGHTS in user_input:
+                max_leds = user_input.get(CONF_MAX_LEDS, options.get(CONF_MAX_LEDS, DEFAULT_MAX_LEDS))
+                spotlight_lights_raw = user_input[CONF_SPOTLIGHT_PLAN_LIGHTS]
+                if spotlight_lights_raw:
+                    user_input[CONF_SPOTLIGHT_PLAN_LIGHTS] = normalize_led_indices(spotlight_lights_raw, max_leds)
+            
+            return self.async_create_entry(title="", data=user_input)
+
+        options = self.config_entry.options
+        
+        # Convert zones to strings for multi_select
+        current_zones = options.get(CONF_ZONES, DEFAULT_ZONES)
+        if isinstance(current_zones, list):
+            zone_defaults = [str(z) for z in current_zones if 1 <= z <= 6]
+        else:
+            zone_defaults = [str(z) for z in DEFAULT_ZONES]
+        
+        data_schema = vol.Schema({
+            vol.Optional(
+                CONF_ZONES,
+                default=zone_defaults,
+            ): cv.multi_select({str(i): f"Zone {i}" for i in range(1, 7)}),
+            vol.Optional(
+                CONF_POLL_INTERVAL,
+                default=options.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL),
+            ): vol.All(vol.Coerce(int), vol.Range(min=10, max=3600)),
+            vol.Optional(
+                CONF_AUTO_POLL,
+                default=options.get(CONF_AUTO_POLL, DEFAULT_AUTO_POLL),
+            ): bool,
+            vol.Optional(
+                CONF_COMMAND_TIMEOUT,
+                default=options.get(CONF_COMMAND_TIMEOUT, DEFAULT_COMMAND_TIMEOUT),
+            ): vol.All(vol.Coerce(int), vol.Range(min=5, max=30)),
+            vol.Optional(
+                CONF_DEBUG_LOGGING,
+                default=options.get(CONF_DEBUG_LOGGING, DEFAULT_DEBUG_LOGGING),
+            ): bool,
+            vol.Optional(
+                CONF_MAX_LEDS,
+                default=options.get(CONF_MAX_LEDS, DEFAULT_MAX_LEDS),
+            ): vol.All(vol.Coerce(int), vol.Range(min=1, max=500)),
+            vol.Optional(
+                CONF_SPOTLIGHT_PLAN_LIGHTS,
+                default=options.get(CONF_SPOTLIGHT_PLAN_LIGHTS, DEFAULT_SPOTLIGHT_PLAN_LIGHTS),
+            ): str,
+            vol.Optional(
+                CONF_VERIFY_COMMANDS,
+                default=options.get(CONF_VERIFY_COMMANDS, DEFAULT_VERIFY_COMMANDS),
+            ): bool,
+            vol.Optional(
+                CONF_VERIFICATION_RETRIES,
+                default=options.get(CONF_VERIFICATION_RETRIES, DEFAULT_VERIFICATION_RETRIES),
+            ): vol.All(vol.Coerce(int), vol.Range(min=1, max=10)),
+            vol.Optional(
+                CONF_VERIFICATION_DELAY,
+                default=options.get(CONF_VERIFICATION_DELAY, DEFAULT_VERIFICATION_DELAY),
+            ): vol.All(vol.Coerce(int), vol.Range(min=1, max=10)),
+            vol.Optional(
+                CONF_VERIFICATION_TIMEOUT,
+                default=options.get(CONF_VERIFICATION_TIMEOUT, DEFAULT_VERIFICATION_TIMEOUT),
+            ): vol.All(vol.Coerce(int), vol.Range(min=10, max=120)),
+        })
+
+        return self.async_show_form(step_id="init", data_schema=data_schema)

@@ -1,4 +1,23 @@
-"""Light platform for the Oelo Lights integration."""
+"""Light platform for the Oelo Lights integration.
+
+Provides light entities for each Oelo Lights zone.
+
+**Key Features:**
+- Dynamic effect list (shows only captured patterns from controller)
+- Pattern application via effect attribute (Home Assistant native)
+- RGB color and brightness control
+- Automatic pattern updates when patterns are captured/renamed/deleted
+- Spotlight plan support (handles 40-LED controller limitation)
+
+**Pattern Workflow:**
+- Patterns are created in Oelo app, then captured in Home Assistant
+- Captured patterns appear in effect list for all zones
+- Apply patterns via effect dropdown or service calls
+
+**Refresh:**
+- Use standard `homeassistant.update_entity` service
+- Entity implements `async_update()` for coordinator refresh
+"""
 
 from __future__ import annotations
 import logging
@@ -9,7 +28,7 @@ import urllib.parse
 from typing import Any
 from homeassistant.const import CONF_IP_ADDRESS, STATE_ON
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, Event, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.device_registry import DeviceInfo
@@ -21,42 +40,43 @@ from homeassistant.components.light import (
 )
 from datetime import timedelta
 
+from .const import (
+    DOMAIN,
+    DEFAULT_SPOTLIGHT_PLAN_LIGHTS,
+    DEFAULT_MAX_LEDS,
+    DEFAULT_ZONES,
+    DEFAULT_POLL_INTERVAL,
+    DEFAULT_COMMAND_TIMEOUT,
+    CONF_ZONES,
+    CONF_POLL_INTERVAL,
+    CONF_AUTO_POLL,
+    CONF_COMMAND_TIMEOUT,
+)
+from .pattern_storage import PatternStorage
+from .pattern_utils import build_pattern_url, normalize_led_indices
+
 _LOGGER = logging.getLogger(__name__)
 
-try:
-    from .patterns import pattern_commands
-    from .const import DOMAIN
-except ImportError:
-    try:
-        from patterns import pattern_commands
-    except ImportError:
-        pattern_commands = {"Solid White": "http://{ip}/setPattern?patternType=custom&zones={zone}&num_zones=1&num_colors=1&colors=255,255,255&direction=F&speed=0&gap=0&other=0&pause=0"}
-        _LOGGER.warning("Could not import patterns.py, using default Solid White pattern.")
-    try:
-        from const import DOMAIN
-    except ImportError:
-        DOMAIN = "oelo_lights"
-        _LOGGER.warning("Could not import const.py, using default DOMAIN 'oelo_lights'.")
-
-SCAN_INTERVAL = timedelta(seconds=30)
 STORAGE_KEY_BASE = f"{DOMAIN}_entity_data"
 STORAGE_VERSION = 1
 
 class OeloDataUpdateCoordinator(DataUpdateCoordinator):
-    def __init__(self, hass: HomeAssistant, session: aiohttp.ClientSession, ip: str) -> None:
+    def __init__(self, hass: HomeAssistant, session: aiohttp.ClientSession, ip: str, poll_interval: int = 300, command_timeout: int = 10) -> None:
         super().__init__(
             hass,
             _LOGGER,
             name=f"Oelo Controller {ip}",
-            update_interval=SCAN_INTERVAL,
+            update_interval=timedelta(seconds=poll_interval),
         )
         self.session = session
         self.ip = ip
+        self.timeout = command_timeout
 
     async def _async_update_data(self):
         url = f"http://{self.ip}/getController"
+        timeout_seconds = getattr(self, "timeout", 10)
         try:
-            async with async_timeout.timeout(10):
+            async with async_timeout.timeout(timeout_seconds):
                 async with self.session.get(url) as response:
                     response.raise_for_status()
                     data = await response.json(content_type=None)
@@ -71,9 +91,17 @@ async def async_setup_entry(
 ) -> None:
     ip_address = entry.data[CONF_IP_ADDRESS]
     session = aiohttp_client.async_get_clientsession(hass)
+    
+    # Get poll interval and timeout from options
+    poll_interval = entry.options.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)
+    command_timeout = entry.options.get(CONF_COMMAND_TIMEOUT, DEFAULT_COMMAND_TIMEOUT)
+    auto_poll = entry.options.get(CONF_AUTO_POLL, True)
 
-    coordinator = OeloDataUpdateCoordinator(hass, session, ip_address)
-    await coordinator.async_config_entry_first_refresh()
+    coordinator = OeloDataUpdateCoordinator(hass, session, ip_address, poll_interval, command_timeout)
+    
+    # Only do initial refresh if auto polling is enabled
+    if auto_poll:
+        await coordinator.async_config_entry_first_refresh()
 
     if DOMAIN not in hass.data:
         hass.data[DOMAIN] = {}
@@ -82,18 +110,31 @@ async def async_setup_entry(
     store = Store(hass, STORAGE_VERSION, storage_key_for_entry)
     stored_entity_data = await store.async_load() or {}
 
+    # Initialize pattern storage
+    pattern_storage = PatternStorage(hass, entry.entry_id)
+    
     hass.data[DOMAIN][entry.entry_id] = {
         "coordinator": coordinator,
         "store": store,
         "stored_entity_data": stored_entity_data,
+        "pattern_storage": pattern_storage,
     }
 
+    # Get zones to create from options
+    zones = entry.options.get(CONF_ZONES, DEFAULT_ZONES)
+    if isinstance(zones, list):
+        zones = [int(z) for z in zones if isinstance(z, (int, str)) and str(z).isdigit()]
+    else:
+        zones = DEFAULT_ZONES
+    
     light_entities = []
-    for zone in range(1, 7):
-        entity_store_key = f"zone_{zone}_last_command"
-        restored_last_command = stored_entity_data.get(entity_store_key)
-        light_entity = OeloLight(coordinator, zone, entry, restored_last_command)
-        light_entities.append(light_entity)
+    for zone in zones:
+        if 1 <= zone <= 6:
+            entity_store_key = f"zone_{zone}_last_command"
+            restored_last_command = stored_entity_data.get(entity_store_key)
+            light_entity = OeloLight(coordinator, zone, entry, restored_last_command)
+            light_entities.append(light_entity)
+    
     async_add_entities(light_entities, True)
 
 class OeloLight(LightEntity, RestoreEntity):
@@ -121,6 +162,8 @@ class OeloLight(LightEntity, RestoreEntity):
         self._debounce_task: asyncio.Task | None = None
         self._debounce_interval = 1.0
         self._entity_store_key = f"zone_{self._zone}_last_command"
+        self._pattern_storage: PatternStorage | None = None
+        self._cached_patterns: list[dict[str, Any]] = []
 
 
     @property
@@ -157,11 +200,46 @@ class OeloLight(LightEntity, RestoreEntity):
 
     @property
     def effect_list(self) -> list[str] | None:
-        return list(pattern_commands.keys()) if self.available else None
+        """Return list of available effects (captured patterns)."""
+        if not self.available:
+            return None
+        
+        # Return pattern names from cached patterns
+        return [p.get("name", "") for p in self._cached_patterns if p.get("name")]
+    
+    async def _load_patterns(self) -> None:
+        """Load patterns from storage."""
+        if not self._pattern_storage:
+            entry_data = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
+            self._pattern_storage = entry_data.get("pattern_storage")
+        
+        if self._pattern_storage:
+            try:
+                self._cached_patterns = await self._pattern_storage.async_load()
+            except Exception as err:
+                _LOGGER.error("Error loading patterns: %s", err)
+                self._cached_patterns = []
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
         self.coordinator.async_add_listener(self._handle_coordinator_update)
+        
+        # Load patterns
+        await self._load_patterns()
+        
+        # Listen for pattern updates
+        @callback
+        def _handle_pattern_update(event: Event) -> None:
+            """Handle pattern update event."""
+            if event.data.get("entry_id") == self._entry.entry_id:
+                # Reload patterns and update state
+                async def _reload_and_update():
+                    await self._load_patterns()
+                    self.async_write_ha_state()
+                self.hass.async_create_task(_reload_and_update())
+        
+        self.hass.bus.async_listen(f"{DOMAIN}_pattern_updated", _handle_pattern_update)
+        
         last_state = await self.async_get_last_state()
         log_prefix = self.entity_id or self._attr_name
         if last_state:
@@ -315,21 +393,44 @@ class OeloLight(LightEntity, RestoreEntity):
             selected_effect = kwargs[ATTR_EFFECT]
             triggered_by_effect_kwarg = True
             _LOGGER.debug("%s: Effect specified: %s", log_prefix, selected_effect)
-            if selected_effect in pattern_commands:
+            
+            # Load patterns if not cached
+            if not self._cached_patterns:
+                await self._load_patterns()
+            
+            # Find pattern by name
+            pattern = None
+            for p in self._cached_patterns:
+                if p.get("name") == selected_effect:
+                    pattern = p
+                    break
+            
+            if pattern:
                 effect_to_set = selected_effect
-                base_command_for_lsc = self._get_base_effect_url(selected_effect)
-                if base_command_for_lsc:
-                    extracted_rgb = self._extract_first_color_from_url(base_command_for_lsc)
-                    if extracted_rgb: 
-                        rgb_to_set = extracted_rgb
-                    else: 
-                        _LOGGER.warning("%s: No base RGB for effect '%s', color may be default.", log_prefix, selected_effect)
-                    url_to_send = self._adjust_colors_in_url(base_command_for_lsc, brightness_factor)
+                # Build URL from captured pattern
+                spotlight_plan_lights_raw = self._entry.options.get("spotlight_plan_lights", DEFAULT_SPOTLIGHT_PLAN_LIGHTS)
+                max_leds = self._entry.options.get("max_leds", DEFAULT_MAX_LEDS)
+                spotlight_plan_lights = normalize_led_indices(spotlight_plan_lights_raw, max_leds) if spotlight_plan_lights_raw else None
+                base_command_for_lsc = build_pattern_url(pattern, self._zone, self.coordinator.ip, spotlight_plan_lights, max_leds)
+                
+                # Extract RGB from pattern
+                colors_str = pattern.get("url_params", {}).get("colors", "")
+                if colors_str:
+                    color_parts = colors_str.split(",")
+                    if len(color_parts) >= 3:
+                        try:
+                            rgb_to_set = (int(color_parts[0]), int(color_parts[1]), int(color_parts[2]))
+                        except (ValueError, IndexError):
+                            rgb_to_set = (255, 255, 255)
+                    else:
+                        rgb_to_set = (255, 255, 255)
                 else:
-                    _LOGGER.error("%s: Could not get base URL for effect '%s'", log_prefix, selected_effect)
-                    return
+                    rgb_to_set = (255, 255, 255)
+                
+                url_to_send = self._adjust_colors_in_url(base_command_for_lsc, brightness_factor)
             else:
-                _LOGGER.error("%s: Invalid effect: '%s'. Valid: %s", log_prefix, selected_effect, list(pattern_commands.keys()))
+                _LOGGER.error("%s: Pattern '%s' not found. Available patterns: %s", 
+                             log_prefix, selected_effect, [p.get("name") for p in self._cached_patterns])
                 return
 
         elif not self._state or ATTR_BRIGHTNESS in kwargs:
@@ -337,11 +438,36 @@ class OeloLight(LightEntity, RestoreEntity):
             
             if effect_to_set and not triggered_by_effect_kwarg:
                 _LOGGER.debug("%s: Replaying stored effect '%s'", log_prefix, effect_to_set)
-                base_command_for_lsc = self._get_base_effect_url(effect_to_set)
-                if base_command_for_lsc:
-                    extracted_rgb = self._extract_first_color_from_url(base_command_for_lsc)
-                    if extracted_rgb: 
-                        rgb_to_set = extracted_rgb
+                # Load patterns if not cached
+                if not self._cached_patterns:
+                    await self._load_patterns()
+                
+                # Find pattern by name
+                pattern = None
+                for p in self._cached_patterns:
+                    if p.get("name") == effect_to_set:
+                        pattern = p
+                        break
+                
+                if pattern:
+                    spotlight_plan_lights_raw = self._entry.options.get("spotlight_plan_lights", DEFAULT_SPOTLIGHT_PLAN_LIGHTS)
+                    max_leds = self._entry.options.get("max_leds", DEFAULT_MAX_LEDS)
+                    spotlight_plan_lights = normalize_led_indices(spotlight_plan_lights_raw, max_leds) if spotlight_plan_lights_raw else None
+                    base_command_for_lsc = build_pattern_url(pattern, self._zone, self.coordinator.ip, spotlight_plan_lights, max_leds)
+                    
+                    # Extract RGB
+                    colors_str = pattern.get("url_params", {}).get("colors", "")
+                    if colors_str:
+                        color_parts = colors_str.split(",")
+                        if len(color_parts) >= 3:
+                            try:
+                                rgb_to_set = (int(color_parts[0]), int(color_parts[1]), int(color_parts[2]))
+                            except (ValueError, IndexError):
+                                rgb_to_set = (255, 255, 255)
+                        else:
+                            rgb_to_set = (255, 255, 255)
+                    else:
+                        rgb_to_set = (255, 255, 255)
                 else:
                     effect_to_set = None
             
@@ -359,17 +485,18 @@ class OeloLight(LightEntity, RestoreEntity):
                  if lsc_pattern_type == "custom": 
                      effect_to_set = None
                  elif lsc_pattern_type != "off":
+                     # Try to find pattern name from captured patterns
+                     if not self._cached_patterns:
+                         await self._load_patterns()
+                     
                      found_effect_name = False
-                     for name, cmd_url_template in pattern_commands.items():
-                         try:
-                             parsed_template_url = urllib.parse.urlparse(cmd_url_template)
-                             template_params = urllib.parse.parse_qs(parsed_template_url.query)
-                             if template_params.get("patternType", [""])[0] == lsc_pattern_type:
-                                 effect_to_set = name
-                                 found_effect_name = True
-                                 break
-                         except Exception: 
-                             pass
+                     for pattern in self._cached_patterns:
+                         pattern_type = pattern.get("url_params", {}).get("patternType", "")
+                         if pattern_type == lsc_pattern_type:
+                             effect_to_set = pattern.get("name")
+                             found_effect_name = True
+                             break
+                     
                      if not found_effect_name: 
                          effect_to_set = None
 
@@ -497,37 +624,28 @@ class OeloLight(LightEntity, RestoreEntity):
                     self.async_write_ha_state()
 
 
-    def _get_base_effect_url(self, effect_name: str) -> str | None:
+    def _get_pattern_url(self, pattern_name: str) -> str | None:
+        """Get pattern URL from captured patterns."""
         log_prefix = self.entity_id or self._attr_name
-        if effect_name not in pattern_commands:
-            _LOGGER.error("%s: Effect '%s' not in pattern_commands", log_prefix, effect_name)
+        
+        # Find pattern by name
+        pattern = None
+        for p in self._cached_patterns:
+            if p.get("name") == pattern_name:
+                pattern = p
+                break
+        
+        if not pattern:
+            _LOGGER.error("%s: Pattern '%s' not found in captured patterns", log_prefix, pattern_name)
             return None
-
-        base_template = pattern_commands[effect_name]
-        if not isinstance(base_template, str):
-             _LOGGER.error("%s: Pattern for '%s' is not str: %s", log_prefix, effect_name, base_template)
-             return None
-
+        
         try:
-            parsed_template = urllib.parse.urlparse(base_template)
-            template_query = urllib.parse.parse_qs(parsed_template.query, keep_blank_values=True)
-
-            template_query['zones'] = [str(self._zone)]
-            template_query['num_zones'] = ['1']
-
-            final_query_str = urllib.parse.urlencode(template_query, doseq=True)
-            
-            path = parsed_template.path if parsed_template.path else "/setPattern"
-
-            final_url = urllib.parse.urlunparse(
-                ('http', self.coordinator.ip, path, parsed_template.params, final_query_str, parsed_template.fragment)
-            )
-            _LOGGER.debug("%s: Constructed base URL for effect '%s': %s", log_prefix, effect_name, final_url)
-            return final_url
-
+            spotlight_plan_lights_raw = self._entry.options.get("spotlight_plan_lights", DEFAULT_SPOTLIGHT_PLAN_LIGHTS)
+            max_leds = self._entry.options.get("max_leds", DEFAULT_MAX_LEDS)
+            spotlight_plan_lights = normalize_led_indices(spotlight_plan_lights_raw, max_leds) if spotlight_plan_lights_raw else None
+            return build_pattern_url(pattern, self._zone, self.coordinator.ip, spotlight_plan_lights, max_leds)
         except Exception as e:
-            _LOGGER.error("%s: Error building URL for effect '%s' from '%s': %s",
-                          log_prefix, effect_name, base_template, e)
+            _LOGGER.error("%s: Error building URL for pattern '%s': %s", log_prefix, pattern_name, e)
             return None
 
 
@@ -560,8 +678,9 @@ class OeloLight(LightEntity, RestoreEntity):
     async def _send_request(self, url: str) -> bool:
         log_prefix = self.entity_id or self._attr_name
         _LOGGER.debug("%s: Sending request: %s", log_prefix, url)
+        timeout_seconds = getattr(self.coordinator, "timeout", 10)
         try:
-            async with async_timeout.timeout(10):
+            async with async_timeout.timeout(timeout_seconds):
                 session = self.coordinator.session
                 if session is None or session.closed:
                      _LOGGER.error("%s: HTTP session closed/invalid for send request.", log_prefix)

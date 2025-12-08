@@ -1,0 +1,153 @@
+oelo-patterns-card {
+  display: block;
+}
+
+oelo-patterns-card ha-card {
+  padding: 16px;
+}
+
+oelo-patterns-card .card-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+oelo-patterns-card .header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+oelo-patterns-card .header h2 {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 400;
+  color: var(--primary-text-color);
+}
+
+oelo-patterns-card .capture-btn {
+  --mdc-theme-primary: var(--primary-color);
+}
+
+oelo-patterns-card .patterns-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+oelo-patterns-card .pattern-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px;
+  background: var(--card-background-color, var(--primary-background-color));
+  border: 1px solid var(--divider-color);
+  border-radius: 4px;
+  transition: box-shadow 0.2s;
+}
+
+oelo-patterns-card .pattern-item:hover {
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+oelo-patterns-card .pattern-info {
+  flex: 1;
+  min-width: 0;
+}
+
+oelo-patterns-card .pattern-name {
+  font-size: 1rem;
+  font-weight: 500;
+  color: var(--primary-text-color);
+  margin-bottom: 4px;
+  word-break: break-word;
+}
+
+oelo-patterns-card .pattern-id {
+  font-size: 0.75rem;
+  color: var(--secondary-text-color);
+  font-family: monospace;
+  word-break: break-all;
+}
+
+oelo-patterns-card .pattern-actions {
+  display: flex;
+  gap: 4px;
+  margin-left: 12px;
+}
+
+oelo-patterns-card .pattern-actions mwc-icon-button {
+  --mdc-icon-button-size: 36px;
+  --mdc-icon-size: 20px;
+  color: var(--secondary-text-color);
+}
+
+oelo-patterns-card .pattern-actions mwc-icon-button:hover {
+  color: var(--primary-color);
+}
+
+oelo-patterns-card .apply-btn {
+  color: var(--success-color, #4caf50);
+}
+
+oelo-patterns-card .delete-btn {
+  color: var(--error-color, #f44336);
+}
+
+oelo-patterns-card .empty-state {
+  text-align: center;
+  padding: 32px 16px;
+  color: var(--secondary-text-color);
+}
+
+oelo-patterns-card .empty-state ha-icon {
+  font-size: 48px;
+  color: var(--disabled-text-color);
+  margin-bottom: 16px;
+}
+
+oelo-patterns-card .empty-state p {
+  margin: 8px 0;
+}
+
+oelo-patterns-card .empty-state .hint {
+  font-size: 0.875rem;
+  color: var(--disabled-text-color);
+}
+
+oelo-patterns-card .loading,
+oelo-patterns-card .error {
+  text-align: center;
+  padding: 32px 16px;
+  color: var(--secondary-text-color);
+}
+
+oelo-patterns-card .error {
+  color: var(--error-color, #f44336);
+}
+
+/* Responsive design */
+@media (max-width: 600px) {
+  oelo-patterns-card .header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  oelo-patterns-card .capture-btn {
+    width: 100%;
+  }
+
+  oelo-patterns-card .pattern-item {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  oelo-patterns-card .pattern-actions {
+    width: 100%;
+    justify-content: flex-end;
+    margin-left: 0;
+    margin-top: 8px;
+  }
+}
