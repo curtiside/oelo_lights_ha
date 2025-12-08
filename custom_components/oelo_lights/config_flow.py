@@ -83,7 +83,7 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
                     data = await response.json(content_type=None)
                     if isinstance(data, list):
                         _LOGGER.debug("Successfully connected to Oelo controller at %s", ip)
-                        return {"title": "oleo_lights_ha"} 
+                        return {"title": "oelo_lights_ha"} 
                     else:
                         _LOGGER.warning("Unexpected response format from %s", ip)
                         raise CannotConnect("Device responded but doesn't appear to be an Oelo controller")

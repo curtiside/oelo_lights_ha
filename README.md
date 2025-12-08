@@ -18,7 +18,7 @@ head -200 custom_components/oelo_lights/services.py
 
 1. Install [HACS](https://hacs.xyz/docs/setup/download) if needed
 2. HACS → Integrations → Custom repositories → Add `https://github.com/curtiside/oelo_lights_ha` (Category: Integration)
-3. Search "oleo_lights_ha" → Download → Restart
+3. Search "oelo_lights_ha" → Download → Restart
 
 ### Manual
 
@@ -34,7 +34,7 @@ cp -r oelo_lights_ha/custom_components/oelo_lights /config/custom_components/
 
 ### Initial Setup
 
-Settings → Devices & Services → Add Integration → Search "oleo_lights_ha" → Enter controller IP address → Submit.
+Settings → Devices & Services → Add Integration → Search "oelo_lights_ha" → Enter controller IP address → Submit.
 
 **Required:**
 - **Controller IP Address** - IPv4 address of Oelo controller on local network
@@ -43,7 +43,7 @@ Integration validates IP and creates entities for all zones (1-6) with default s
 
 ### Configure Options (After Setup)
 
-Settings → Devices & Services → oleo_lights_ha → Configure (or click integration → Configure button).
+Settings → Devices & Services → oelo_lights_ha → Configure (or click integration → Configure button).
 
 **Note:** Changing zones requires restart. Other options take effect immediately.
 
@@ -106,6 +106,7 @@ Each zone is a light entity (`light.oelo_lights_zone_1`, etc.). Control via UI, 
 
 **Pattern Management (Capture, Rename, Delete):**
 - **Dashboard Card** - Automatically added to Overview dashboard during setup/reload. Provides buttons for Capture, Apply, Rename, Delete. Replaces any existing zones card if present.
+- **Add to Other Dashboards** - Edit dashboard → + Add Card → Manual → Paste: `type: custom:oelo-patterns-card`, `entity: light.oelo_lights_ha_zone_1`, `title: Oelo Patterns`
 - **Developer Tools → Services** - Settings → Developer Tools → Services → Search `oelo_lights` → Use `capture_effect`, `rename_effect`, `delete_effect` services
 
 ### Effect Workflow

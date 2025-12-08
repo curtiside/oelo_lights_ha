@@ -38,8 +38,8 @@ See test file docstrings for prerequisites and detailed usage.
 ### Updating Integration Code
 
 After making code changes:
-1. **HACS**: Redownload integration (HACS → Integrations → oleo_lights_ha → Redownload)
-2. **Restart** Home Assistant or **Reload** integration (Settings → Devices & Services → oleo_lights_ha → Reload)
+1. **HACS**: Redownload integration (HACS → Integrations → oelo_lights_ha → Redownload)
+2. **Restart** Home Assistant or **Reload** integration (Settings → Devices & Services → oelo_lights_ha → Reload)
 
 ### Docker Setup
 

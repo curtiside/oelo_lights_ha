@@ -177,8 +177,15 @@ async def _add_card_to_dashboard(hass: HomeAssistant, entry: ConfigEntry) -> Non
             
             # Try to get dashboard storage
             try:
+                from homeassistant.components.lovelace.const import ConfigNotFound
                 storage = LovelaceStorage(hass, None)
-                config = await storage.async_load(force=False)
+                
+                try:
+                    config = await storage.async_load(force=False)
+                except ConfigNotFound:
+                    # Dashboard doesn't exist yet - create it
+                    _LOGGER.info("Dashboard config not found, creating new dashboard with pattern management card")
+                    config = {"views": []}
                 
                 if not config:
                     _LOGGER.warning("Dashboard config is None - cannot add pattern management card")
