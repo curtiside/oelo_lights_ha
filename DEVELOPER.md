@@ -6,7 +6,15 @@ Development and testing tools for Oelo Lights Home Assistant integration.
 
 ```bash
 make setup && make start
+# Complete onboarding in browser: http://localhost:8123
+# Configure .env.test with credentials
+make test-all
 ```
+
+**Test-Fix-Retest Cycle:**
+- After code changes: `make restart && make test-all`
+- After test changes: `make test-all`
+- After Dockerfile changes: `make build && make test-all`
 
 See `Makefile` for commands.
 
@@ -84,7 +92,7 @@ CONTROLLER_IP=your_oelo_controller_ip  # ⚠️ IMPORTANT: Change this to your O
 
 **Important:** You must update `CONTROLLER_IP` in `.env.test` to match your Oelo controller's IP address. The default value (`10.16.52.41`) is an example and will not work unless it matches your controller.
 
-Tests will automatically create a long-lived access token from these credentials.
+**Token Creation:** Tests will automatically create a long-lived access token from `HA_USERNAME` and `HA_PASSWORD` via WebSocket API. This happens automatically when tests need API access - you don't need to manually create a token if you provide username/password credentials.
 
 **Option B: Manual Token Creation**
 
@@ -154,12 +162,14 @@ make setup
 
 ### First-Time Setup
 
-**Build the test container (required once):**
+**Build the test container:**
 ```bash
 make build
 ```
 
-This builds the test runner container with all dependencies (Selenium, ChromeDriver, Python packages). You only need to rebuild if you modify `test/Dockerfile.test` or need to update dependencies.
+This builds the test runner container with all dependencies (Selenium, ChromeDriver, Python packages). 
+
+**Note:** `make test-all` will automatically build the test container if it doesn't exist, but it's recommended to run `make build` explicitly first to ensure it's up-to-date. You only need to rebuild if you modify `test/Dockerfile.test` or need to update dependencies.
 
 ### Environment Variables
 
@@ -181,8 +191,12 @@ HA_PASSWORD=test_password_123         # Password (tests auto-create token)
 - `.env.test` file in project root (checked into git with example values)
 - **Important:** Update `CONTROLLER_IP` in `.env.test` to match your Oelo controller's IP address
 - Update with your local test credentials (username/password or token)
-- Or export as environment variables before running tests (overrides `.env.test`)
+
+**Automatic Token Creation:**
 - If `HA_USERNAME` and `HA_PASSWORD` are provided, tests automatically create `HA_TOKEN` via WebSocket API
+- This happens automatically when tests need API access - no manual token creation needed
+- The token is created on-demand and cached in the environment for the test session
+- Works as long as the user account exists and credentials are correct
 
 ### Test Categories
 
@@ -190,12 +204,13 @@ HA_PASSWORD=test_password_123         # Password (tests auto-create token)
    - No HA dependency
    - Run fast, no container needed
    - Test core logic
+   - If using API: Auto-creates token from `HA_USERNAME`/`HA_PASSWORD` if `HA_TOKEN` not provided
 
 2. **Integration Tests** (`test_user_workflow.py`)
    - Requires running HA
-   - Tests API interactions
-   - Tests device configuration
-   - Tests pattern workflow
+   - Primarily UI-based (Selenium), doesn't require tokens
+   - Tests device configuration via UI
+   - Tests pattern workflow via UI
 
 ### Running Tests
 
@@ -227,6 +242,18 @@ python3 test/test_user_workflow.py \
   [--keep-container]
 ```
 
+**Watch browser during tests:**
+```bash
+# Terminal 1: Run tests
+make test-all
+
+# Terminal 2: Watch browser (auto-opens Chrome DevTools)
+make watch
+
+# Or with custom options
+python3 test/watch_browser.py --interval 0.5 --screenshots --open-devtools
+```
+
 **Run with command-line args:**
 ```bash
 python3 test/test_user_workflow.py \
@@ -256,7 +283,7 @@ head -100 test/test_helpers.py
   - Pattern capture/rename/apply logic validation
 
 - **test_user_workflow.py** - Complete end-to-end test (container + UI)
-  - Container management, onboarding, HACS installation, integration installation, device configuration, pattern workflow
+  - Container management, onboarding, HACS installation (automated via Docker), integration installation (from curtiside/oelo_lights_ha), device configuration, pattern workflow
 
 - **test_helpers.py** - Shared helper functions
   - Container management, HA readiness checks, browser automation, UI interactions
@@ -357,11 +384,52 @@ See `test/test_helpers.py` for cleanup helper functions.
 
 ## Development Environment
 
+### Test-Fix-Retest Workflow
+
+**After making code or test changes:**
+
+**1. Integration code changes** (`custom_components/oelo_lights/`):
+```bash
+make restart          # Restart HA to pick up code changes
+make test-all         # Run tests
+```
+
+**2. Test code changes** (`test/` directory):
+```bash
+make test-all         # Tests are mounted, no rebuild needed
+```
+
+**3. Dockerfile changes** (`test/Dockerfile.test`):
+```bash
+make build            # Rebuild test container
+make test-all         # Run tests
+```
+
+**Quick retest (skip HACS/integration installation):**
+```bash
+make restart          # Restart HA (if code changed)
+python3 test/run_all_tests.py  # Or run specific test
+# OR with skip flags:
+docker-compose run --rm test python3 -u /tests/test_user_workflow.py --skip-hacs --skip-patterns
+```
+
+**Note:** 
+- Integration code is mounted read-only, so changes are immediately available
+- Test code is mounted read-only, so changes are immediately available
+- HA needs restart to reload integration code changes
+- Test container only needs rebuild if Dockerfile or dependencies change
+
 ### Updating Integration Code
 
 After code changes:
 1. HACS: Redownload integration (HACS → Integrations → oelo_lights_ha → Redownload)
 2. Restart HA or Reload integration (Settings → Devices & Services → oelo_lights_ha → Reload)
+
+**For local testing (faster):**
+```bash
+make restart          # Restart HA container to pick up changes
+make test-all         # Run tests
+```
 
 ### Docker Setup
 
@@ -401,7 +469,78 @@ See `make help` for all available commands.
 - `make test` - Quick test (setup, start, check logs)
 - `make test-all` - Run all tests
 
-### Cleanup When Done Testing
+### Viewing Browser During Tests
+
+There are several ways to see what's happening in the browser during test execution:
+
+### Option 1: Automated Browser Monitor (Easiest)
+
+Use the `watch_browser.py` script to automatically monitor the browser:
+
+```bash
+# Terminal 1: Run tests
+make test-all
+
+# Terminal 2: Watch browser (auto-opens Chrome DevTools)
+make watch
+```
+
+The script will:
+- Automatically detect when Chrome remote debugging is available
+- Show browser tabs, URLs, and titles in real-time
+- Optionally open Chrome DevTools automatically
+- Optionally take screenshots at state changes
+
+**Manual Chrome Remote Debugging:**
+
+If you prefer manual connection:
+
+1. **Start the test** (it will run in headless mode):
+   ```bash
+   make test-all
+   ```
+
+2. **Open Chrome** on your host machine and navigate to:
+   ```
+   chrome://inspect
+   ```
+
+3. **Click "Open dedicated DevTools for Node"** or look for the remote target under "Remote Target"
+
+4. You'll see the browser window and can interact with it in real-time
+
+**Note:** The test container exposes port 9222, so Chrome on your host can connect to `localhost:9222`.
+
+### Option 2: Non-Headless Mode with Screenshots
+
+Run the test with browser visible and take screenshots:
+
+```bash
+# Run test with visible browser (requires Xvfb in container)
+docker-compose run --rm test python3 -u /tests/test_user_workflow.py --no-headless --screenshots --skip-hacs --skip-patterns
+
+# Screenshots will be saved to test/screenshot_*.png
+```
+
+**Note:** Non-headless mode requires Xvfb (already installed in test container). The browser runs in a virtual display that you can't directly see, but screenshots capture the state.
+
+### Option 3: Screenshots Only (Headless)
+
+Take screenshots without running in non-headless mode:
+
+```bash
+docker-compose run --rm test python3 -u /tests/test_user_workflow.py --screenshots --skip-hacs --skip-patterns
+```
+
+Screenshots are saved to `test/screenshot_*.png` at key test steps (e.g., after login).
+
+### Troubleshooting Browser Viewing
+
+- **Chrome remote debugging not showing targets**: Ensure port 9222 is accessible and the test is running
+- **Non-headless mode fails**: Xvfb should start automatically, but check container logs if issues occur
+- **Screenshots not saving**: Check that `/workspace/test/` is writable in the container
+
+## Cleanup When Done Testing
 
 **Stop container (keeps config/data):**
 ```bash

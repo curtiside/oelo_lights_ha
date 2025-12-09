@@ -1,4 +1,4 @@
-.PHONY: help setup start stop restart logs clean test test-all status ps shell exec build
+.PHONY: help setup start stop restart logs clean test test-all status ps shell exec build watch
 
 help:
 	@echo "Oelo Lights HA Testing Makefile"
@@ -19,6 +19,7 @@ help:
 	@echo "Testing:"
 	@echo "  make test     - Run quick test (start, wait, check logs)"
 	@echo "  make test-all - Run complete test suite (all tests in order)"
+	@echo "  make watch    - Monitor browser during tests (run in separate terminal)"
 
 setup:
 	@echo "Setting up test environment..."
@@ -113,8 +114,16 @@ test-all:
 	@echo "Running complete test suite..."
 	@make setup
 	@make start
+	@echo "Building test container (if needed)..."
+	@docker-compose build test || true
 	@echo "Waiting for Home Assistant to be ready..."
 	@sleep 60
 	@echo "Installing ChromeDriver for UI tests..."
 	@docker-compose exec -T homeassistant bash -c "apt-get update -qq && apt-get install -y -qq chromium chromium-driver 2>&1 | grep -v '^WARNING' || apk add --no-cache chromium chromium-chromedriver 2>&1 | grep -v '^WARNING' || echo 'ChromeDriver install attempted'" || true
 	@python3 test/run_all_tests.py
+
+watch:
+	@echo "Starting browser monitor..."
+	@echo "Make sure tests are running in another terminal (make test-all)"
+	@echo ""
+	@python3 test/watch_browser.py --open-devtools

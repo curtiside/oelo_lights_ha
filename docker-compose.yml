@@ -27,6 +27,8 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     network_mode: host
     shm_size: 2gb  # Increase shared memory for Chrome
+    ports:
+      - "9222:9222"  # Chrome remote debugging port (for viewing browser)
     environment:
       - HA_URL=http://localhost:8123
       - DBUS_SESSION_BUS_ADDRESS=/dev/null  # Fix ChromeDriver hangs

@@ -3,11 +3,20 @@
 
 Tests complete user workflow from container start to pattern application:
 1. Container management (start, health checks)
-2. Fresh HA setup (onboarding)
-3. HACS installation via UI
-4. Integration installation via HACS
+2. Login (validate credentials from .env.test work - user created manually in one-time setup)
+3. HACS installation via Docker (automated)
+4. Integration installation via HACS (from curtiside/oelo_lights_ha repo)
 5. Device configuration (add device, set IP)
 6. Pattern workflow (capture, rename, apply)
+
+Note: User account must be created manually as part of one-time setup (see DEVELOPER.md).
+Tests load credentials from .env.test and verify they can login.
+
+Viewing Browser During Tests:
+- Use --no-headless flag to run browser in visible mode (requires Xvfb)
+- Chrome remote debugging is enabled on port 9222
+- Connect Chrome browser to chrome://inspect to view/test browser
+- Use --screenshots flag to save screenshots at key steps
 
 Usage:
     python3 test/test_user_workflow.py [OPTIONS]
@@ -44,9 +53,10 @@ Configuration:
 Test Architecture:
     Uses locally running HA container approach:
     - User manually starts HA container (persists between runs)
-    - User completes onboarding manually (one-time setup)
+    - User completes onboarding manually (one-time setup) - creates user account
+    - Tests verify user account exists and can login
     - Tests connect to existing HA instance
-    - Tests focus on integration functionality
+    - Tests focus on integration functionality (HACS, integration, device, patterns)
     
     See DEVELOPER.md for detailed setup instructions.
 
@@ -73,9 +83,10 @@ sys.path.insert(0, os.path.dirname(__file__))
 from test_helpers import (
     stop_container, start_container, wait_for_container_ready,
     wait_for_ha_ready, wait_for_ha_restart, create_driver,
-    complete_onboarding_ui, login_ui, clear_logs_ui,
+    login_ui, clear_logs_ui,
     ONBOARDING_USERNAME, ONBOARDING_PASSWORD,
-    get_or_create_ha_token
+    get_or_create_ha_token, install_hacs_via_docker,
+    verify_onboarding_complete
 )
 
 import os
@@ -672,8 +683,31 @@ def apply_pattern_ui(driver: webdriver.Chrome) -> bool:
         return False
 
 
+def load_env_file(env_file: str = ".env.test") -> None:
+    """Load environment variables from .env.test file."""
+    import os
+    env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), env_file)
+    if os.path.exists(env_path):
+        print(f"Loading environment from {env_file}...", flush=True)
+        with open(env_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    key, value = line.split('=', 1)
+                    key = key.strip()
+                    value = value.strip().strip('"').strip("'")
+                    if key and value:
+                        os.environ[key] = value
+        print(f"✓ Loaded environment from {env_file}", flush=True)
+    else:
+        print(f"⚠️  {env_file} not found - using environment variables only", flush=True)
+
+
 def main():
     """Run complete user workflow test."""
+    # Load .env.test file first
+    load_env_file()
+    
     parser = argparse.ArgumentParser(description="Oelo Lights User Workflow Test")
     parser.add_argument("--clean-config", action="store_true", help="Clean config directory before starting")
     parser.add_argument("--keep-container", action="store_true", help="Keep container running after test")
@@ -681,6 +715,8 @@ def main():
     parser.add_argument("--controller-ip", default=CONTROLLER_IP, help="Controller IP address")
     parser.add_argument("--skip-hacs", action="store_true", help="Skip HACS installation (assume already installed)")
     parser.add_argument("--output-file", default="/workspace/test/test_output.log", help="File to write test output")
+    parser.add_argument("--no-headless", action="store_true", help="Run browser in non-headless mode (requires Xvfb, can view via VNC or remote debugging)")
+    parser.add_argument("--screenshots", action="store_true", help="Take screenshots at key test steps")
     
     args = parser.parse_args()
     
@@ -749,7 +785,15 @@ def main():
     
     # 5. Set up browser
     print("\n=== Setting up Browser ===")
-    driver = create_driver()
+    headless = not args.no_headless
+    if args.no_headless:
+        print("  Running in NON-HEADLESS mode - browser will be visible", flush=True)
+        sys.stdout.flush()
+        print("  Chrome remote debugging: http://localhost:9222", flush=True)
+        sys.stdout.flush()
+        print("  Connect Chrome to chrome://inspect to view browser", flush=True)
+        sys.stdout.flush()
+    driver = create_driver(headless=headless)
     if not driver:
         print("✗ Failed to create browser driver")
         if tee:
@@ -763,83 +807,84 @@ def main():
     driver.implicitly_wait(10)
     
     try:
-        # 6. Complete onboarding (with aggressive timeout protection)
-        print("\n=== Onboarding ===", flush=True)
+        # 6. Verify onboarding is complete and login (user account exists)
+        # Note: User should be created manually as part of one-time setup (see DEVELOPER.md)
+        # Tests verify they can login using credentials from .env.test
+        print("\n=== Verifying User Account and Login ===", flush=True)
         sys.stdout.flush()
         
-        # Use threading timeout with shorter timeout
-        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+        # Check what credentials we have
+        username = os.environ.get("HA_USERNAME", ONBOARDING_USERNAME)
+        password = os.environ.get("HA_PASSWORD", ONBOARDING_PASSWORD)
+        print(f"  Using credentials: {username} / {'*' * len(password) if password else 'NOT SET'}", flush=True)
+        sys.stdout.flush()
         
-        def run_onboarding():
-            # Use non-headless mode for user creation (may fix JavaScript errors)
-            return complete_onboarding_ui(driver=None, timeout=20, use_non_headless=True)
+        if not username or not password:
+            print("✗ Credentials not set - check .env.test file", flush=True)
+            sys.stdout.flush()
+            print("  Expected: HA_USERNAME and HA_PASSWORD in .env.test", flush=True)
+            sys.stdout.flush()
+            results.append(False)
+            print("\n⚠️  Skipping remaining tests - credentials required", flush=True)
+            sys.stdout.flush()
+            return results
         
-        onboarding_result = False
-        try:
-            with ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(run_onboarding)
-                onboarding_result = future.result(timeout=30)  # 30 second hard timeout
-            results.append(onboarding_result)
-        except FutureTimeoutError:
-            print("⚠️  Onboarding hard timeout (30s) - WebDriver appears stuck", flush=True)
-            sys.stdout.flush()
-            print("  Attempting to recover...", flush=True)
-            sys.stdout.flush()
-            # Try to check status without WebDriver
+        # Try to login via UI - this is the simplest verification
+        print("\n=== Login ===", flush=True)
+        sys.stdout.flush()
+        
+        login_result = login_ui(driver, username=username, password=password)
+        
+        # Take screenshot if requested
+        if args.screenshots:
             try:
-                import requests
-                resp = requests.get(f"{HA_URL}/api/", timeout=5)
-                if resp.status_code in [200, 401]:
-                    print("  ✓ HA API is responding - assuming onboarding can be skipped", flush=True)
-                    sys.stdout.flush()
-                    results.append(True)  # Assume OK if API works
-                else:
-                    results.append(False)
-            except:
-                print("  ⚠️  Could not verify HA status", flush=True)
+                screenshot_path = "/workspace/test/screenshot_login.png"
+                driver.save_screenshot(screenshot_path)
+                print(f"  Screenshot saved: {screenshot_path}", flush=True)
                 sys.stdout.flush()
-                results.append(False)
-        except Exception as e:
-            print(f"⚠️  Onboarding error: {e}", flush=True)
+            except Exception as e:
+                print(f"  Could not save screenshot: {e}", flush=True)
+                sys.stdout.flush()
+        
+        if not login_result:
+            print("✗ Login failed - check credentials in .env.test match manual setup", flush=True)
             sys.stdout.flush()
-            # Check if we're past onboarding via API
-            try:
-                import requests
-                resp = requests.get(f"{HA_URL}/api/", timeout=5)
-                if resp.status_code in [200, 401]:
-                    print("  ✓ HA API responding - assuming onboarding OK", flush=True)
-                    sys.stdout.flush()
-                    results.append(True)
-                else:
-                    results.append(False)
-            except:
-                results.append(False)
+            print(f"  Used credentials: {username} / {'*' * len(password)}", flush=True)
+            sys.stdout.flush()
+            print("  User must be created manually as part of one-time setup", flush=True)
+            sys.stdout.flush()
+            print("  See DEVELOPER.md section 'Test Setup (One-Time)' for instructions", flush=True)
+            sys.stdout.flush()
+            results.append(False)
+            # Skip remaining tests if login failed
+            print("\n⚠️  Skipping remaining tests - login required", flush=True)
+            sys.stdout.flush()
+            return results
+        
+        results.append(True)
+        print("✓ Login successful - user account verified", flush=True)
+        sys.stdout.flush()
         time.sleep(1)
         
-        # 7. Login (or verify already logged in)
-        print("\n=== Login ===")
-        login_result = login_ui(driver)
-        if not login_result:
-            # Try to verify if we can access protected pages anyway
-            driver.get(f"{HA_URL}/config/integrations")
-            time.sleep(3)
-            if "login" not in driver.current_url.lower() and "auth" not in driver.current_url.lower():
-                print("✓ Can access protected pages - already authenticated")
-                login_result = True
-        results.append(login_result)
-        
-        # 8. Install HACS (if not skipped)
+        # 7. Install HACS (if not skipped)
         if not args.skip_hacs:
-            hacs_result = install_hacs_ui(driver)
+            # Try Docker-based installation first (more reliable)
+            hacs_result = install_hacs_via_docker()
+            if not hacs_result:
+                # Fallback to UI-based installation
+                print("  Docker installation failed, trying UI method...")
+                hacs_result = install_hacs_ui(driver)
             results.append(hacs_result)
             if hacs_result:
+                # Wait for HA to restart after HACS installation
+                wait_for_ha_restart()
                 # Clear logs after HACS installation
                 clear_logs_ui(driver)
         else:
             print("\n=== Skipping HACS Installation ===")
             results.append(True)
         
-        # 9. Install integration via HACS (if HACS not skipped)
+        # 8. Install integration via HACS (if HACS not skipped)
         if not args.skip_hacs:
             integration_result = install_integration_via_hacs_ui(driver)
             results.append(integration_result)
@@ -848,20 +893,15 @@ def main():
             print("  Assuming integration is already installed")
             results.append(True)
         
-        # 10. Add device (only if login succeeded)
-        if login_result:
-            device_result = add_device_via_ui(driver, args.controller_ip)
-            results.append(device_result)
-            
-            # 11. Configure options
-            options_result = configure_options_via_ui(driver)
-            results.append(options_result)
-        else:
-            print("\n⚠️  Skipping device configuration - login required")
-            results.append(False)
-            results.append(False)
+        # 9. Add device (login already verified above - if we reach here, login succeeded)
+        device_result = add_device_via_ui(driver, args.controller_ip)
+        results.append(device_result)
         
-        # 12. Pattern workflow (if not skipped)
+        # 10. Configure options
+        options_result = configure_options_via_ui(driver)
+        results.append(options_result)
+        
+        # 11. Pattern workflow (if not skipped)
         if not args.skip_patterns:
             capture_result = capture_pattern_ui(driver)
             results.append(capture_result)

@@ -7,7 +7,7 @@ Test Execution Order:
 2. test_workflow.py - Pattern logic unit tests (no UI, no container)
    - Pattern capture, rename, apply logic validation
 3. test_user_workflow.py - Complete end-to-end test (container + UI)
-   - Container management, onboarding, HACS, integration, device, patterns
+   - Container management, onboarding, HACS (automated), integration (from curtiside/oelo_lights_ha), device, patterns
 
 Test Strategy:
 - Unit tests: Fast feedback, validate logic without container

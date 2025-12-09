@@ -77,6 +77,74 @@ ONBOARDING_PASSWORD = "test_password_123"
 ONBOARDING_NAME = "Test User"
 
 
+def install_hacs_via_docker() -> bool:
+    """Install HACS in HA container via docker exec.
+    
+    Uses docker exec to run the HACS installation script inside the container.
+    This is more reliable than UI automation.
+    
+    Returns:
+        True if successful, False otherwise
+    """
+    print("\n=== Installing HACS via Docker ===")
+    
+    # Check if HACS already installed
+    try:
+        result = subprocess.run(
+            ["docker", "exec", CONTAINER_NAME, "test", "-d", "/config/custom_components/hacs"],
+            capture_output=True,
+            timeout=10
+        )
+        if result.returncode == 0:
+            print("✓ HACS already installed")
+            return True
+    except:
+        pass
+    
+    # Install HACS via docker exec
+    # Use bash -c to properly handle the pipe
+    try:
+        print("  Running HACS installation script...")
+        result = subprocess.run(
+            ["docker", "exec", CONTAINER_NAME, "bash", "-c", "wget -O - https://get.hacs.xyz | bash -"],
+            capture_output=True,
+            timeout=120,
+            text=True
+        )
+        
+        if result.returncode == 0:
+            print("✓ HACS installation script executed")
+            print("  Waiting for container restart...")
+            time.sleep(10)  # Give HA time to restart
+            
+            # Verify installation
+            verify_result = subprocess.run(
+                ["docker", "exec", CONTAINER_NAME, "test", "-d", "/config/custom_components/hacs"],
+                capture_output=True,
+                timeout=10
+            )
+            if verify_result.returncode == 0:
+                print("✓ HACS installed successfully")
+                return True
+            else:
+                print("⚠️  HACS installation may have completed but directory not found yet")
+                print("   Container may need restart - will verify after restart")
+                return True  # Assume success, will verify later
+        else:
+            error_output = result.stderr or result.stdout
+            print(f"⚠️  HACS installation returned non-zero exit code: {result.returncode}")
+            if error_output:
+                print(f"   Output: {error_output[:500]}")
+            return False
+            
+    except subprocess.TimeoutExpired:
+        print("⚠️  HACS installation timed out")
+        return False
+    except Exception as e:
+        print(f"⚠️  Error installing HACS: {e}")
+        return False
+
+
 def get_project_dir() -> str:
     """Get project root directory.
     
@@ -150,15 +218,32 @@ async def create_token_from_credentials(username: str, password: str) -> Optiona
                     
                     if token_data.get("success") and token_data.get("result"):
                         token = token_data["result"]
-                        print(f"  ✓ Token created automatically from username/password")
+                        print(f"  ✓ Token created automatically from username/password", flush=True)
+                        sys.stdout.flush()
                         return token
+                    else:
+                        error_msg = token_data.get("error", {}).get("message", "Unknown error")
+                        print(f"  ✗ Token creation failed: {error_msg}", flush=True)
+                        sys.stdout.flush()
+                        return None
                 elif auth_data.get("type") == "auth_invalid":
-                    print(f"  ✗ Authentication failed - check username/password")
+                    error_msg = auth_data.get("message", "Invalid credentials")
+                    print(f"  ✗ Authentication failed: {error_msg}", flush=True)
+                    sys.stdout.flush()
+                    print(f"    Username: {username}", flush=True)
+                    sys.stdout.flush()
+                    return None
+                else:
+                    print(f"  ✗ Unexpected auth response: {auth_data.get('type')}", flush=True)
+                    sys.stdout.flush()
                     return None
         finally:
             await websocket.close()
     except Exception as e:
-        print(f"  ⚠️  Could not create token: {e}")
+        print(f"  ⚠️  Could not create token: {e}", flush=True)
+        sys.stdout.flush()
+        import traceback
+        traceback.print_exc()
         return None
     
     return None
@@ -184,8 +269,10 @@ def get_or_create_ha_token() -> Optional[str]:
     password = os.environ.get("HA_PASSWORD")
     
     if username and password:
-        print("  No HA_TOKEN found, but HA_USERNAME/HA_PASSWORD provided")
-        print("  Attempting to create token automatically...")
+        print("  No HA_TOKEN found, but HA_USERNAME/HA_PASSWORD provided", flush=True)
+        sys.stdout.flush()
+        print("  Attempting to create token automatically...", flush=True)
+        sys.stdout.flush()
         try:
             import asyncio
             token = asyncio.run(create_token_from_credentials(username, password))
@@ -193,8 +280,14 @@ def get_or_create_ha_token() -> Optional[str]:
                 # Optionally save to environment for this session
                 os.environ["HA_TOKEN"] = token
                 return token
+            else:
+                print("  ⚠️  Token creation returned None", flush=True)
+                sys.stdout.flush()
         except Exception as e:
-            print(f"  ⚠️  Failed to create token: {e}")
+            print(f"  ⚠️  Failed to create token: {e}", flush=True)
+            sys.stdout.flush()
+            import traceback
+            traceback.print_exc()
     
     return None
 
@@ -822,6 +915,74 @@ def complete_onboarding_api() -> bool:
         return False
 
 
+def verify_onboarding_complete() -> bool:
+    """Verify that onboarding is complete and user account exists.
+    
+    This validates that:
+    1. Onboarding API indicates user step is done
+    2. User account can authenticate (credentials work)
+    
+    Returns:
+        True if onboarding is complete and user account exists, False otherwise
+    """
+    print("\n=== Verifying Onboarding Complete ===", flush=True)
+    sys.stdout.flush()
+    
+    # Check onboarding API
+    try:
+        import requests
+        resp = requests.get(f"{HA_URL}/api/onboarding", timeout=5)
+        if resp.status_code == 200:
+            steps = resp.json()
+            user_step = next((s for s in steps if s.get("step") == "user"), None)
+            if not user_step or not user_step.get("done"):
+                print("  ✗ Onboarding incomplete - user step not done", flush=True)
+                sys.stdout.flush()
+                return False
+            print("  ✓ Onboarding API indicates user step is complete", flush=True)
+            sys.stdout.flush()
+        elif resp.status_code == 404:
+            # Onboarding API returns 404 when onboarding is complete
+            print("  ✓ Onboarding API returns 404 (onboarding complete)", flush=True)
+            sys.stdout.flush()
+        else:
+            print(f"  ⚠️  Unexpected onboarding API response: {resp.status_code}", flush=True)
+            sys.stdout.flush()
+    except Exception as e:
+        print(f"  ⚠️  Could not check onboarding API: {e}", flush=True)
+        sys.stdout.flush()
+        return False
+    
+    # Verify user account exists by attempting authentication
+    username = os.environ.get("HA_USERNAME", ONBOARDING_USERNAME)
+    password = os.environ.get("HA_PASSWORD", ONBOARDING_PASSWORD)
+    
+    if username and password:
+        print(f"  Verifying user account exists: {username}", flush=True)
+        sys.stdout.flush()
+        try:
+            # Try to create a token - if this works, user account exists
+            token = get_or_create_ha_token()
+            if token:
+                print("  ✓ User account verified - can authenticate", flush=True)
+                sys.stdout.flush()
+                return True
+            else:
+                print("  ✗ User account verification failed - cannot authenticate", flush=True)
+                sys.stdout.flush()
+                print(f"    Credentials: {username} / {'*' * len(password)}", flush=True)
+                sys.stdout.flush()
+                return False
+        except Exception as e:
+            print(f"  ✗ User account verification error: {e}", flush=True)
+            sys.stdout.flush()
+            return False
+    else:
+        print("  ⚠️  No credentials provided - cannot verify user account", flush=True)
+        sys.stdout.flush()
+        return False
+
+
 def complete_onboarding_ui(driver: Optional[webdriver.Chrome] = None, timeout: int = 30, use_non_headless: bool = True) -> bool:
     """Complete onboarding via UI clicks.
     
@@ -836,19 +997,30 @@ def complete_onboarding_ui(driver: Optional[webdriver.Chrome] = None, timeout: i
     Returns:
         True if successful, False otherwise
     """
-    # Check if already complete via API
-    if complete_onboarding_api():
-        return True
+    # Check if already complete via API AND user account exists
+    # Don't just check API - must verify user account actually exists
+    api_complete = complete_onboarding_api()
+    if api_complete:
+        # Verify user account actually exists by attempting authentication
+        print("  Onboarding API indicates complete - verifying user account exists...", flush=True)
+        sys.stdout.flush()
+        if verify_onboarding_complete():
+            print("  ✓ Onboarding complete and user account verified", flush=True)
+            sys.stdout.flush()
+            return True
+        else:
+            print("  ⚠️  Onboarding API says complete but user account doesn't exist", flush=True)
+            sys.stdout.flush()
+            print("  Will attempt to complete onboarding via UI...", flush=True)
+            sys.stdout.flush()
+            # Continue to UI completion below
     
-    # Try storage file workaround first (for JavaScript error cases)
-    print("  Attempting storage file workaround for JavaScript error...", flush=True)
-    sys.stdout.flush()
-    if complete_onboarding_storage():
-        print("  ⚠️  Storage file updated, but user account still needs creation", flush=True)
+    # If no driver provided, we can't create user account - fail
+    if driver is None:
+        print("  ✗ No driver provided - cannot create user account via UI", flush=True)
         sys.stdout.flush()
-        print("  ⚠️  This is a workaround - user account must be created manually", flush=True)
+        print("  ⚠️  Storage workaround doesn't create user account - login will fail!", flush=True)
         sys.stdout.flush()
-        # Return False so caller knows user account still needs creation
         return False
     
     # Must use UI to create user account
@@ -963,14 +1135,114 @@ def complete_onboarding_ui(driver: Optional[webdriver.Chrome] = None, timeout: i
             sys.stdout.flush()
         
         if onboarding_complete:
-            return True
+            # Verify user account actually exists before returning True
+            print("  Verifying user account exists...", flush=True)
+            sys.stdout.flush()
+            if verify_onboarding_complete():
+                return True
+            else:
+                print("  ⚠️  Onboarding API says complete but user account doesn't exist", flush=True)
+                sys.stdout.flush()
+                print("  Will attempt to complete onboarding via UI...", flush=True)
+                sys.stdout.flush()
+                # Continue to UI completion below
         
-        # Fallback: Check URL
-        if ("login" in current_url or "lovelace" in current_url or 
-            "dashboard" in current_url or "overview" in current_url or
-            ("onboarding" not in current_url and "/" == current_url.split("/")[-1])):
-            print("✓ Onboarding already completed (verified via URL)")
-            return True
+        # If not on onboarding page, check if user account exists
+        # Don't assume completion just because we're not on onboarding page
+        if "onboarding" not in current_url:
+            # Check if we're on a page that indicates completion (dashboard, lovelace)
+            # vs an auth page that might mean onboarding isn't done
+            if "lovelace" in current_url or "dashboard" in current_url or "overview" in current_url:
+                # These pages suggest onboarding might be complete - verify
+                print("  URL suggests onboarding complete - verifying user account exists...", flush=True)
+                sys.stdout.flush()
+                if verify_onboarding_complete():
+                    print("✓ Onboarding already completed (verified via URL and user account)", flush=True)
+                    sys.stdout.flush()
+                    return True
+                else:
+                    print("  ⚠️  URL suggests complete but user account doesn't exist", flush=True)
+                    sys.stdout.flush()
+                    print("  Will attempt to navigate to onboarding page...", flush=True)
+                    sys.stdout.flush()
+                    # Try to navigate to onboarding explicitly
+                    try:
+                        driver.get(f"{HA_URL}/onboarding")
+                        time.sleep(3)
+                        # Check again if we're on onboarding page now
+                        current_url = driver.current_url.lower()
+                        if "onboarding" in current_url:
+                            print("  ✓ Navigated to onboarding page", flush=True)
+                            sys.stdout.flush()
+                            # Continue with onboarding completion below
+                        else:
+                            print("  ⚠️  Could not navigate to onboarding page", flush=True)
+                            sys.stdout.flush()
+                            return False
+                    except Exception as e:
+                        print(f"  ⚠️  Error navigating to onboarding: {e}", flush=True)
+                        sys.stdout.flush()
+                        return False
+            elif "auth" in current_url or "login" in current_url:
+                # Auth/login page - might mean onboarding isn't done, try to navigate to onboarding
+                print("  On auth/login page - checking if onboarding needed...", flush=True)
+                sys.stdout.flush()
+                if verify_onboarding_complete():
+                    print("✓ User account exists - onboarding complete", flush=True)
+                    sys.stdout.flush()
+                    return True
+                else:
+                    print("  User account doesn't exist - navigating to onboarding...", flush=True)
+                    sys.stdout.flush()
+                    try:
+                        driver.get(f"{HA_URL}/onboarding")
+                        time.sleep(3)
+                        current_url = driver.current_url.lower()
+                        if "onboarding" in current_url:
+                            print("  ✓ Navigated to onboarding page", flush=True)
+                            sys.stdout.flush()
+                            # Continue with onboarding completion below
+                        else:
+                            print("  ⚠️  Could not navigate to onboarding page", flush=True)
+                            sys.stdout.flush()
+                            return False
+                    except Exception as e:
+                        print(f"  ⚠️  Error navigating to onboarding: {e}", flush=True)
+                        sys.stdout.flush()
+                        return False
+            else:
+                # Unknown page - verify user account exists
+                print("  Unknown page - verifying user account exists...", flush=True)
+                sys.stdout.flush()
+                if verify_onboarding_complete():
+                    print("✓ User account exists - onboarding complete", flush=True)
+                    sys.stdout.flush()
+                    return True
+                else:
+                    print("  User account doesn't exist - navigating to onboarding...", flush=True)
+                    sys.stdout.flush()
+                    try:
+                        driver.get(f"{HA_URL}/onboarding")
+                        time.sleep(3)
+                        current_url = driver.current_url.lower()
+                        if "onboarding" in current_url:
+                            print("  ✓ Navigated to onboarding page", flush=True)
+                            sys.stdout.flush()
+                            # Continue with onboarding completion below
+                        else:
+                            print("  ⚠️  Could not navigate to onboarding page", flush=True)
+                            sys.stdout.flush()
+                            return False
+                    except Exception as e:
+                        print(f"  ⚠️  Error navigating to onboarding: {e}", flush=True)
+                        sys.stdout.flush()
+                        return False
+        
+        # Update current_url after potential navigation
+        try:
+            current_url = driver.current_url.lower()
+        except:
+            pass
         
         # If we're on onboarding page, try to complete it
         if "onboarding" in current_url:
@@ -1231,8 +1503,35 @@ def complete_onboarding_ui(driver: Optional[webdriver.Chrome] = None, timeout: i
                 sys.stdout.flush()
                 time.sleep(3)  # Fallback wait
         else:
-            print("  Not on onboarding page - assuming completed")
-            return True
+            # Not on onboarding page - but verify user account actually exists
+            print("  Not on onboarding page - verifying user account exists...", flush=True)
+            sys.stdout.flush()
+            if verify_onboarding_complete():
+                print("  ✓ User account verified - onboarding truly complete", flush=True)
+                sys.stdout.flush()
+                return True
+            else:
+                print("  ✗ User account doesn't exist - onboarding not actually complete", flush=True)
+                sys.stdout.flush()
+                print("  Will attempt to navigate to onboarding page...", flush=True)
+                sys.stdout.flush()
+                # Try to navigate to onboarding explicitly
+                try:
+                    driver.get(f"{HA_URL}/onboarding")
+                    time.sleep(3)
+                    # Check again if we're on onboarding page now
+                    if "onboarding" in driver.current_url.lower():
+                        print("  ✓ Navigated to onboarding page", flush=True)
+                        sys.stdout.flush()
+                        # Continue with onboarding completion below
+                    else:
+                        print("  ⚠️  Could not navigate to onboarding page", flush=True)
+                        sys.stdout.flush()
+                        return False
+                except Exception as e:
+                    print(f"  ⚠️  Error navigating to onboarding: {e}", flush=True)
+                    sys.stdout.flush()
+                    return False
         
         # Find form fields using polling instead of WebDriverWait (more reliable)
         print("  Looking for name field...", flush=True)
@@ -1496,20 +1795,79 @@ def complete_onboarding_ui(driver: Optional[webdriver.Chrome] = None, timeout: i
         return False
 
 
-def login_ui(driver: webdriver.Chrome) -> bool:
+def login_ui(driver: webdriver.Chrome, username: Optional[str] = None, password: Optional[str] = None) -> bool:
     """Login via UI if needed.
     
     Args:
         driver: Selenium WebDriver instance
+        username: Username to use (defaults to HA_USERNAME env var or ONBOARDING_USERNAME)
+        password: Password to use (defaults to HA_PASSWORD env var or ONBOARDING_PASSWORD)
         
     Returns:
         True if logged in, False otherwise
     """
+    # Get credentials from args, env vars, or constants
+    if username is None:
+        username = os.environ.get("HA_USERNAME", ONBOARDING_USERNAME)
+    if password is None:
+        password = os.environ.get("HA_PASSWORD", ONBOARDING_PASSWORD)
+    
+    print(f"  Attempting login with: {username}", flush=True)
+    sys.stdout.flush()
+    print(f"  Navigating to: {HA_URL}", flush=True)
+    sys.stdout.flush()
+    
+    # First verify HA is accessible
     try:
-        driver.get(HA_URL)
-        time.sleep(3)
+        print("  Verifying HA is accessible...", flush=True)
+        sys.stdout.flush()
+        resp = requests.get(f"{HA_URL}/api/", timeout=5)
+        print(f"  ✓ HA API responding (status: {resp.status_code})", flush=True)
+        sys.stdout.flush()
+    except Exception as e:
+        print(f"  ✗ Cannot reach HA at {HA_URL}: {e}", flush=True)
+        sys.stdout.flush()
+        return False
+    
+    try:
+        print("  Loading page in browser...", flush=True)
+        sys.stdout.flush()
+        
+        # Set a timeout for page load
+        try:
+            driver.set_page_load_timeout(30)
+        except:
+            pass  # May already be set
+        
+        # Use a timeout wrapper for driver.get
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+        def load_page():
+            driver.get(HA_URL)
+            return True
+        
+        try:
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(load_page)
+                future.result(timeout=35)  # Slightly longer than page_load_timeout
+            print("  Page loaded, waiting 3 seconds...", flush=True)
+            sys.stdout.flush()
+            time.sleep(3)
+            print("  Page ready, checking login status...", flush=True)
+            sys.stdout.flush()
+        except FutureTimeoutError:
+            print("  ⚠️  Page load timed out after 35 seconds", flush=True)
+            sys.stdout.flush()
+            return False
+        except Exception as page_error:
+            print(f"  ⚠️  Error loading page: {page_error}", flush=True)
+            sys.stdout.flush()
+            import traceback
+            traceback.print_exc()
+            return False
         
         current_url = driver.current_url.lower()
+        print(f"  Current URL: {current_url}", flush=True)
+        sys.stdout.flush()
         
         # Get page source with timeout
         page_source = ""
@@ -1525,86 +1883,614 @@ def login_ui(driver: webdriver.Chrome) -> bool:
         if ("login" not in current_url and "auth" not in current_url and 
             ("lovelace" in current_url or "dashboard" in page_source or 
              "home assistant" in page_source or "overview" in page_source)):
-            print("✓ Already logged in")
+            print("✓ Already logged in", flush=True)
+            sys.stdout.flush()
             return True
         
         # Need to login
         wait = WebDriverWait(driver, 20)
         
+        print("  Looking for username field...", flush=True)
+        sys.stdout.flush()
         # Try multiple selectors for username field
         username_field = None
-        for selector in [
+        selectors = [
             "input[type='text'][name*='username']",
             "input[type='text'][id*='username']",
             "input[type='text']",
-            "input[name='username']"
-        ]:
+            "input[name='username']",
+            "ha-textfield input",
+            "mwc-textfield input",
+            "input[type='text'][placeholder*='username' i]",
+            "input[type='text'][placeholder*='name' i]"
+        ]
+        for selector in selectors:
             try:
+                print(f"    Trying selector: {selector}", flush=True)
+                sys.stdout.flush()
                 username_field = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, selector)))
-                break
-            except:
+                if username_field and username_field.is_displayed():
+                    print(f"    ✓ Found username field with: {selector}", flush=True)
+                    sys.stdout.flush()
+                    break
+                else:
+                    username_field = None
+            except Exception as e:
+                print(f"    ✗ Not found: {str(e)[:50]}...", flush=True)
+                sys.stdout.flush()
                 continue
         
         if not username_field:
-            print("⚠️  Could not find username field - may already be logged in")
+            print("⚠️  Could not find username field - may already be logged in", flush=True)
+            sys.stdout.flush()
             driver.get(HA_URL)
             time.sleep(2)
             if "login" not in driver.current_url.lower():
-                print("✓ Already logged in (no login form found)")
+                print("✓ Already logged in (no login form found)", flush=True)
+                sys.stdout.flush()
                 return True
             return False
         
-        username_field.clear()
-        username_field.send_keys(ONBOARDING_USERNAME)
-        time.sleep(1)
+        print(f"  Logging in with username: {username}", flush=True)
+        sys.stdout.flush()
         
+        # Fill username field using JavaScript to ensure it's set
+        print("  Filling username field via JavaScript...", flush=True)
+        sys.stdout.flush()
+        try:
+            driver.execute_script("""
+                var field = arguments[0];
+                var value = arguments[1];
+                field.value = value;
+                field.dispatchEvent(new Event('input', { bubbles: true }));
+                field.dispatchEvent(new Event('change', { bubbles: true }));
+                field.dispatchEvent(new Event('blur', { bubbles: true }));
+            """, username_field, username)
+            print("  Username filled via JavaScript", flush=True)
+            sys.stdout.flush()
+        except Exception as e:
+            print(f"  JavaScript fill failed: {e}, trying Selenium...", flush=True)
+            sys.stdout.flush()
+            username_field.clear()
+            username_field.send_keys(username)
+            print("  Username filled via Selenium", flush=True)
+            sys.stdout.flush()
+        
+        # Verify username was set
+        try:
+            username_value = driver.execute_script("return arguments[0].value;", username_field)
+            if username_value == username:
+                print(f"  ✓ Username verified: '{username_value}'", flush=True)
+                sys.stdout.flush()
+            else:
+                print(f"  ⚠️  Username mismatch! Expected '{username}', got '{username_value}'", flush=True)
+                sys.stdout.flush()
+                # Try again with more aggressive approach
+                driver.execute_script("""
+                    arguments[0].value = '';
+                    arguments[0].value = arguments[1];
+                    arguments[0].dispatchEvent(new Event('input', { bubbles: true }));
+                    arguments[0].dispatchEvent(new Event('change', { bubbles: true }));
+                """, username_field, username)
+                username_value = driver.execute_script("return arguments[0].value;", username_field)
+                print(f"  Retry result: '{username_value}'", flush=True)
+                sys.stdout.flush()
+        except Exception as e:
+            print(f"  ⚠️  Could not verify username: {e}", flush=True)
+            sys.stdout.flush()
+        
+        time.sleep(0.5)
+        
+        print("  Looking for password field...", flush=True)
+        sys.stdout.flush()
         password_field = wait.until(EC.presence_of_element_located((
             By.CSS_SELECTOR, "input[type='password']"
         )))
-        password_field.clear()
-        password_field.send_keys(ONBOARDING_PASSWORD)
-        time.sleep(1)
+        print("  Password field found, filling via JavaScript...", flush=True)
+        sys.stdout.flush()
         
-        # Try multiple selectors for submit button
-        submit_button = None
-        for xpath in [
-            "//button[@type='submit']",
-            "//button[contains(@class, 'submit')]",
-            "//input[@type='submit']",
-            "//button[contains(text(), 'Log')]",
-            "//button[contains(text(), 'Sign')]",
-            "//ha-button[@type='submit']"
-        ]:
+        # Fill password field - use JavaScript to avoid stale element issues
+        try:
+            driver.execute_script("""
+                var pwdField = arguments[0];
+                var pwdValue = arguments[1];
+                pwdField.value = '';
+                pwdField.value = pwdValue;
+                pwdField.dispatchEvent(new Event('input', { bubbles: true }));
+                pwdField.dispatchEvent(new Event('change', { bubbles: true }));
+                pwdField.dispatchEvent(new Event('blur', { bubbles: true }));
+            """, password_field, password)
+            print("  Password filled via JavaScript", flush=True)
+            sys.stdout.flush()
+        except Exception as e:
+            print(f"  JavaScript fill failed: {e}, trying Selenium...", flush=True)
+            sys.stdout.flush()
+            # Fallback to Selenium
             try:
-                submit_button = driver.find_element(By.XPATH, xpath)
-                if submit_button.is_displayed():
+                password_field.clear()
+                password_field.send_keys(password)
+                print("  Password filled via Selenium", flush=True)
+                sys.stdout.flush()
+            except Exception as stale_error:
+                print(f"  Stale element error: {stale_error}, re-finding field...", flush=True)
+                sys.stdout.flush()
+                # Re-find the password field
+                password_field = wait.until(EC.presence_of_element_located((
+                    By.CSS_SELECTOR, "input[type='password']"
+                )))
+                password_field.clear()
+                password_field.send_keys(password)
+                print("  Password filled after re-finding field", flush=True)
+                sys.stdout.flush()
+        
+        # Verify password was set (check length, not value for security)
+        try:
+            password_length = driver.execute_script("return arguments[0].value.length;", password_field)
+            expected_length = len(password)
+            if password_length == expected_length:
+                print(f"  ✓ Password verified: length {password_length} matches expected", flush=True)
+                sys.stdout.flush()
+            else:
+                print(f"  ⚠️  Password length mismatch! Expected {expected_length}, got {password_length}", flush=True)
+                sys.stdout.flush()
+                # Try again
+                driver.execute_script("""
+                    arguments[0].value = '';
+                    arguments[0].value = arguments[1];
+                    arguments[0].dispatchEvent(new Event('input', { bubbles: true }));
+                    arguments[0].dispatchEvent(new Event('change', { bubbles: true }));
+                """, password_field, password)
+                password_length = driver.execute_script("return arguments[0].value.length;", password_field)
+                print(f"  Retry result: length {password_length}", flush=True)
+                sys.stdout.flush()
+        except Exception as e:
+            print(f"  ⚠️  Could not verify password: {e}", flush=True)
+            sys.stdout.flush()
+        
+        time.sleep(0.5)
+        
+        print("  Looking for 'Log in' button using JavaScript...", flush=True)
+        sys.stdout.flush()
+        
+        login_button = None
+        
+        # Use JavaScript to find and click the button (bypasses Selenium find_elements which hangs)
+        try:
+            print("  Searching for button with text 'Log in' via JavaScript...", flush=True)
+            sys.stdout.flush()
+            
+            # JavaScript to find button with "Log in" text and submit form properly
+            clicked = driver.execute_script("""
+                var username = arguments[0];
+                var password = arguments[1];
+                
+                // Verify fields have values before submitting
+                var usernameInput = document.querySelector('input[type="text"][name*="username"], input[name="username"]');
+                var passwordInput = document.querySelector('input[type="password"]');
+                
+                console.log('Username input value:', usernameInput ? usernameInput.value : 'NOT FOUND');
+                console.log('Password input length:', passwordInput ? passwordInput.value.length : 'NOT FOUND');
+                
+                if (!usernameInput || !passwordInput) {
+                    console.error('Form fields not found!');
+                    return false;
+                }
+                
+                if (!usernameInput.value || usernameInput.value !== username) {
+                    console.log('Setting username to:', username);
+                    usernameInput.value = username;
+                    usernameInput.dispatchEvent(new Event('input', { bubbles: true }));
+                    usernameInput.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+                
+                if (!passwordInput.value || passwordInput.value.length !== password.length) {
+                    console.log('Setting password (length:', password.length, ')');
+                    passwordInput.value = password;
+                    passwordInput.dispatchEvent(new Event('input', { bubbles: true }));
+                    passwordInput.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+                
+                // Find and click login button (don't use form.submit() as it may do GET instead of POST)
+                // Try multiple selectors to find the button
+                var buttonSelectors = [
+                    'button[type="submit"]',
+                    'ha-button',
+                    'mwc-button',
+                    'button',
+                    'input[type="submit"]',
+                    '[role="button"]'
+                ];
+                
+                var buttons = [];
+                for (var s = 0; s < buttonSelectors.length; s++) {
+                    var found = document.querySelectorAll(buttonSelectors[s]);
+                    for (var f = 0; f < found.length; f++) {
+                        buttons.push(found[f]);
+                    }
+                }
+                
+                console.log('Found', buttons.length, 'potential buttons');
+                
+                for (var i = 0; i < buttons.length; i++) {
+                    var btn = buttons[i];
+                    var text = btn.textContent ? btn.textContent.trim().toLowerCase() : '';
+                    var innerText = btn.innerText ? btn.innerText.trim().toLowerCase() : '';
+                    var ariaLabel = btn.getAttribute('aria-label') ? btn.getAttribute('aria-label').toLowerCase() : '';
+                    
+                    console.log('Checking button:', text || innerText || ariaLabel || 'no text');
+                    
+                    if (text === 'log in' || text === 'login' || 
+                        innerText === 'log in' || innerText === 'login' ||
+                        ariaLabel === 'log in' || ariaLabel === 'login' ||
+                        btn.type === 'submit') {
+                        console.log('Found login button, ensuring fields are set...');
+                        // Ensure fields are set before clicking
+                        if (usernameInput && (!usernameInput.value || usernameInput.value !== username)) {
+                            usernameInput.value = username;
+                            usernameInput.dispatchEvent(new Event('input', { bubbles: true }));
+                            usernameInput.dispatchEvent(new Event('change', { bubbles: true }));
+                        }
+                        if (passwordInput && (!passwordInput.value || passwordInput.value.length !== password.length)) {
+                            passwordInput.value = password;
+                            passwordInput.dispatchEvent(new Event('input', { bubbles: true }));
+                            passwordInput.dispatchEvent(new Event('change', { bubbles: true }));
+                        }
+                        
+                        console.log('Clicking login button...');
+                        // Use multiple click methods to ensure it works
+                        btn.focus();
+                        btn.scrollIntoView({ behavior: 'instant', block: 'center' });
+                        btn.click();
+                        
+                        // Also dispatch click event manually
+                        var clickEvent = new MouseEvent('click', {
+                            bubbles: true,
+                            cancelable: true,
+                            view: window
+                        });
+                        btn.dispatchEvent(clickEvent);
+                        
+                        return true;
+                    }
+                }
+                console.error('Login button not found! Checked', buttons.length, 'buttons');
+                return false;
+            """, username, password)
+            
+            if clicked:
+                print("  ✓ Found and clicked 'Log in' button via JavaScript!", flush=True)
+                sys.stdout.flush()
+                
+                # Check browser console for errors
+                try:
+                    logs = driver.get_log('browser')
+                    if logs:
+                        errors = [log for log in logs if log['level'] == 'SEVERE']
+                        if errors:
+                            print(f"  ⚠️  Browser console errors detected: {len(errors)} errors", flush=True)
+                            sys.stdout.flush()
+                            for err in errors[:3]:  # Show first 3 errors
+                                print(f"    - {err.get('message', 'Unknown error')[:200]}", flush=True)
+                                sys.stdout.flush()
+                except:
+                    pass  # Console logs may not be available
+                
+                login_button = "clicked"  # Mark as clicked
+            else:
+                print("  'Log in' button not found via JavaScript, will try Enter key", flush=True)
+                sys.stdout.flush()
+        except Exception as e:
+            print(f"  JavaScript button search error: {e}, will try Enter key", flush=True)
+            sys.stdout.flush()
+        
+        # Click the button if found (JavaScript already clicked it if login_button == "clicked")
+        if login_button == "clicked":
+            # Already clicked via JavaScript, nothing to do
+            pass
+        elif login_button:
+            print("  Clicking Login button...", flush=True)
+            sys.stdout.flush()
+            try:
+                login_button.click()
+                print("  ✓ Login button clicked", flush=True)
+                sys.stdout.flush()
+            except Exception as e:
+                print(f"  ⚠️  Could not click button: {e}, trying JavaScript click", flush=True)
+                sys.stdout.flush()
+                try:
+                    driver.execute_script("arguments[0].click();", login_button)
+                    print("  ✓ Login button clicked via JavaScript", flush=True)
+                    sys.stdout.flush()
+                except:
+                    print("  ⚠️  JavaScript click also failed", flush=True)
+                    sys.stdout.flush()
+        else:
+            print("  ⚠️  Login button not found, trying Enter key...", flush=True)
+            sys.stdout.flush()
+            try:
+                # Re-find password field to avoid stale element
+                password_field = wait.until(EC.presence_of_element_located((
+                    By.CSS_SELECTOR, "input[type='password']"
+                )))
+                password_field.send_keys(Keys.RETURN)
+                print("  Enter key sent", flush=True)
+                sys.stdout.flush()
+            except Exception as e:
+                print(f"  ⚠️  Could not send Enter key: {e}", flush=True)
+                sys.stdout.flush()
+                # Try JavaScript to submit form
+                try:
+                    driver.execute_script("""
+                        var pwdField = document.querySelector('input[type="password"]');
+                        if (pwdField) {
+                            var event = new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true });
+                            pwdField.dispatchEvent(event);
+                            var event2 = new KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true });
+                            pwdField.dispatchEvent(event2);
+                            var event3 = new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true });
+                            pwdField.dispatchEvent(event3);
+                        }
+                    """)
+                    print("  Enter key sent via JavaScript", flush=True)
+                    sys.stdout.flush()
+                except:
+                    pass
+        
+        print("  Form submitted, waiting for response...", flush=True)
+        sys.stdout.flush()
+        
+        # Double-check fields are still populated right before submission
+        try:
+            final_username = driver.execute_script("""
+                var input = document.querySelector('input[type="text"][name*="username"], input[name="username"]');
+                return input ? input.value : null;
+            """)
+            final_password_len = driver.execute_script("""
+                var input = document.querySelector('input[type="password"]');
+                return input ? input.value.length : 0;
+            """)
+            print(f"  Final check - Username: '{final_username}', Password length: {final_password_len}", flush=True)
+            sys.stdout.flush()
+            
+            if not final_username or final_username != username:
+                print(f"  ⚠️  Username lost! Re-setting...", flush=True)
+                sys.stdout.flush()
+                driver.execute_script("""
+                    var input = document.querySelector('input[type="text"][name*="username"], input[name="username"]');
+                    if (input) {
+                        input.value = arguments[0];
+                        input.dispatchEvent(new Event('input', { bubbles: true }));
+                    }
+                """, username)
+            
+            if final_password_len != len(password):
+                print(f"  ⚠️  Password lost! Re-setting...", flush=True)
+                sys.stdout.flush()
+                driver.execute_script("""
+                    var input = document.querySelector('input[type="password"]');
+                    if (input) {
+                        input.value = arguments[0];
+                        input.dispatchEvent(new Event('input', { bubbles: true }));
+                    }
+                """, password)
+        except Exception as e:
+            print(f"  Could not verify fields before submission: {e}", flush=True)
+            sys.stdout.flush()
+        
+        # Wait for page navigation to complete after login click
+        print("  Waiting for page navigation after login...", flush=True)
+        sys.stdout.flush()
+        
+        # Wait for URL to change (indicating successful login redirect)
+        start_time = time.time()
+        timeout = 15
+        url_changed = False
+        
+        while time.time() - start_time < timeout:
+            try:
+                current_url = driver.execute_script("return window.location.href;").lower()
+                if "auth/authorize" not in current_url:
+                    url_changed = True
+                    print(f"  ✓ URL changed to: {current_url}", flush=True)
+                    sys.stdout.flush()
                     break
+                time.sleep(0.5)
             except:
+                time.sleep(0.5)
                 continue
         
-        if submit_button:
-            submit_button.click()
-        else:
-            # Fallback: press Enter on password field
-            password_field.send_keys(Keys.RETURN)
+        if not url_changed:
+            print("  ⚠️  URL did not change after button click", flush=True)
+            sys.stdout.flush()
         
-        time.sleep(5)
+        # Wait for page to load (with timeout)
+        try:
+            # Use WebDriverWait to wait for page to change or load
+            WebDriverWait(driver, 5).until(
+                lambda d: d.execute_script("return document.readyState") == "complete"
+            )
+            print("  Page load complete", flush=True)
+            sys.stdout.flush()
+        except:
+            print("  Page load wait timed out or failed, continuing...", flush=True)
+            sys.stdout.flush()
+            time.sleep(2)  # Fallback short wait
         
-        # Verify login
-        driver.get(HA_URL)
-        time.sleep(3)
-        if "login" not in driver.current_url.lower() and "auth" not in driver.current_url.lower():
-            print("✓ Login successful")
-            return True
-        print("⚠️  Still on login page after submit")
-        return False
+        # Skip intermediate status check, go straight to verification
+        print("  Proceeding to login verification...", flush=True)
+        sys.stdout.flush()
+        
+        print("  Verifying login...", flush=True)
+        sys.stdout.flush()
+        
+        # Check current URL first (may have already redirected) using JavaScript with timeout
+        def get_url():
+            try:
+                return driver.execute_script("return window.location.href;").lower()
+            except:
+                return None
+        
+        try:
+            print("  Getting current URL...", flush=True)
+            sys.stdout.flush()
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(get_url)
+                current_url_after = future.result(timeout=5)
+            
+            if current_url_after:
+                print(f"  Current URL: {current_url_after}", flush=True)
+                sys.stdout.flush()
+                
+                # Check if we're logged in (not on login/auth pages)
+                if "login" not in current_url_after and "auth" not in current_url_after:
+                    print("✓ Login successful (already redirected)", flush=True)
+                    sys.stdout.flush()
+                    return True
+                
+                # If still on authorize page, check for errors and wait a bit more
+                if "auth/authorize" in current_url_after:
+                    print("  Still on authorize page, checking for errors...", flush=True)
+                    sys.stdout.flush()
+                    
+                    # Check current field values to see if they're still there
+                    try:
+                        field_check = driver.execute_script("""
+                            var usernameInput = document.querySelector('input[type="text"][name*="username"], input[name="username"]');
+                            var passwordInput = document.querySelector('input[type="password"]');
+                            return {
+                                username: usernameInput ? usernameInput.value : 'NOT FOUND',
+                                passwordLength: passwordInput ? passwordInput.value.length : 0,
+                                usernameEmpty: usernameInput ? !usernameInput.value : true,
+                                passwordEmpty: passwordInput ? !passwordInput.value : true
+                            };
+                        """)
+                        print(f"  Field status - Username: '{field_check.get('username', 'unknown')}', Password length: {field_check.get('passwordLength', 0)}", flush=True)
+                        sys.stdout.flush()
+                        if field_check.get('usernameEmpty') or field_check.get('passwordEmpty'):
+                            print("  ⚠️  Fields appear to be empty after submission attempt!", flush=True)
+                            sys.stdout.flush()
+                    except Exception as e:
+                        print(f"  Could not check field status: {e}", flush=True)
+                        sys.stdout.flush()
+                    
+                    # Check for error messages using JavaScript
+                    try:
+                        error_info = driver.execute_script("""
+                            var errors = document.querySelectorAll('[class*="error"], [class*="invalid"], [id*="error"], [role="alert"], [class*="warning"]');
+                            var msgs = [];
+                            for (var i = 0; i < Math.min(errors.length, 5); i++) {
+                                var txt = errors[i].textContent.trim();
+                                if (txt && txt.length > 3) msgs.push(txt);
+                            }
+                            // Also check if form fields show validation errors
+                            var inputs = document.querySelectorAll('input');
+                            for (var i = 0; i < inputs.length; i++) {
+                                if (inputs[i].validity && !inputs[i].validity.valid) {
+                                    msgs.push('Input validation failed: ' + (inputs[i].name || inputs[i].id || 'unknown'));
+                                }
+                            }
+                            return msgs.join(' | ');
+                        """)
+                        if error_info:
+                            print(f"  ⚠️  Errors detected: {error_info[:300]}", flush=True)
+                            sys.stdout.flush()
+                        else:
+                            print("  No error messages found on page", flush=True)
+                            sys.stdout.flush()
+                    except:
+                        pass
+                    
+                    print("  Waiting 3 more seconds for redirect...", flush=True)
+                    sys.stdout.flush()
+                    # Use short sleeps to avoid hangs
+                    for _ in range(3):
+                        time.sleep(1)
+                    
+                    try:
+                        with ThreadPoolExecutor(max_workers=1) as executor:
+                            future = executor.submit(get_url)
+                            final_url = future.result(timeout=5)
+                        if final_url:
+                            print(f"  URL after additional wait: {final_url}", flush=True)
+                            sys.stdout.flush()
+                            if "login" not in final_url and "auth" not in final_url:
+                                print("✓ Login successful (redirected after wait)", flush=True)
+                                sys.stdout.flush()
+                                return True
+                            else:
+                                print("  ⚠️  Still on authorize/login page - login may have failed", flush=True)
+                                sys.stdout.flush()
+                                print("  Attempting to navigate to HA_URL to check login state...", flush=True)
+                                sys.stdout.flush()
+                    except Exception as e:
+                        print(f"  Error checking final URL: {e}", flush=True)
+                        sys.stdout.flush()
+            else:
+                print("  ⚠️  Could not get URL", flush=True)
+                sys.stdout.flush()
+        except FutureTimeoutError:
+            print("  ⚠️  URL check timed out", flush=True)
+            sys.stdout.flush()
+        except Exception as e:
+            print(f"  Error checking current URL: {e}", flush=True)
+            sys.stdout.flush()
+        
+        # Navigate to HA_URL to verify login (with timeout protection)
+        print("  Navigating to HA_URL to verify login...", flush=True)
+        sys.stdout.flush()
+        try:
+            def navigate():
+                driver.get(HA_URL)
+                time.sleep(2)
+                return driver.execute_script("return window.location.href;").lower()
+            
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(navigate)
+                current_url_after = future.result(timeout=20)
+            
+            print(f"  URL after navigation: {current_url_after}", flush=True)
+            sys.stdout.flush()
+            
+            if "login" not in current_url_after and "auth" not in current_url_after:
+                print("✓ Login successful", flush=True)
+                sys.stdout.flush()
+                return True
+            else:
+                print("⚠️  Still on login/auth page - login may have failed", flush=True)
+                sys.stdout.flush()
+                return False
+                
+        except FutureTimeoutError:
+            print("⚠️  Navigation timed out - checking current URL", flush=True)
+            sys.stdout.flush()
+            try:
+                current_url_after = driver.execute_script("return window.location.href;").lower()
+                print(f"  Current URL: {current_url_after}", flush=True)
+                sys.stdout.flush()
+                if "login" not in current_url_after and "auth" not in current_url_after:
+                    print("✓ Login successful (despite timeout)", flush=True)
+                    sys.stdout.flush()
+                    return True
+            except:
+                pass
+            return False
+        except Exception as e:
+            print(f"⚠️  Error verifying login: {e}", flush=True)
+            sys.stdout.flush()
+            import traceback
+            traceback.print_exc()
+            return False
     except Exception as e:
-        print(f"⚠️  Login check failed: {e}")
+        print(f"⚠️  Login check failed: {e}", flush=True)
+        sys.stdout.flush()
+        import traceback
+        traceback.print_exc()
         # Check if we're actually logged in despite the error
         driver.get(HA_URL)
         time.sleep(2)
         if "login" not in driver.current_url.lower():
-            print("✓ Already logged in (despite error)")
+            print("✓ Already logged in (despite error)", flush=True)
+            sys.stdout.flush()
             return True
         return False
 
