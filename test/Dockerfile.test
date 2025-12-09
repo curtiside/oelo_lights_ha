@@ -22,7 +22,7 @@ RUN apk add --no-cache \
     libgcc
 
 # Install additional Python packages for testing
-RUN pip3 install --no-cache-dir selenium aiohttp requests
+RUN pip3 install --no-cache-dir selenium aiohttp requests websockets
 
 # Create symlink for chromedriver if needed
 RUN ln -sf /usr/bin/chromium-chromedriver /usr/bin/chromedriver 2>/dev/null || true

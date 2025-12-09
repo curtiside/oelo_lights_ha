@@ -17,7 +17,7 @@ services:
   test:
     build:
       context: .
-      dockerfile: Dockerfile.test
+      dockerfile: test/Dockerfile.test
     container_name: ha-test-runner
     volumes:
       - ./test:/tests:ro

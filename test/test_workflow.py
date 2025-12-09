@@ -4,10 +4,29 @@
 Validates: pattern extraction, renaming, URL generation. Tests logic only,
 not full HA integration. Requires Zone 1 ON with pattern set.
 
-Run:
+Usage:
     python3 test/test_workflow.py
     # Or in Docker:
     docker-compose exec homeassistant python3 /config/test/test_workflow.py
+
+Test Workflow:
+    1. Capture pattern from Zone 1 (must be ON with pattern)
+    2. Extract pattern name from controller response
+    3. Rename pattern (modify name)
+    4. Generate apply URL with renamed pattern
+    5. Verify URL format and parameters
+
+Prerequisites:
+    - Zone 1 must be ON with pattern set on controller
+    - Controller accessible at CONTROLLER_IP
+    - Home Assistant running (for API access)
+
+Configuration:
+    Environment variables:
+        CONTROLLER_IP: Oelo controller IP (default: 10.16.52.41)
+        HA_URL: Home Assistant URL (default: http://localhost:8123)
+
+See DEVELOPER.md for complete testing architecture.
 """
 
 import asyncio
@@ -21,9 +40,6 @@ HA_URL = "http://localhost:8123"
 
 async def wait_for_ha_ready():
     """Wait for Home Assistant to be ready.
-    
-    Note: This function is currently unused but kept for potential
-    future use when testing against a running Home Assistant instance.
     
     Returns:
         bool: True if Home Assistant is ready
@@ -44,13 +60,9 @@ async def wait_for_ha_ready():
 
 
 async def test_capture_pattern():
-    """Test capturing a pattern from the controller.
+    """Test capturing pattern from controller.
     
-    Validates:
-    - Controller is reachable
-    - Zone 1 is ON and has a pattern set
-    - Pattern extraction succeeds
-    - Extracted pattern has required fields (id, name, plan_type)
+    Validates controller reachable, zone 1 ON with pattern, extraction succeeds.
     
     Returns:
         tuple: (success: bool, pattern: dict | None)
@@ -71,7 +83,17 @@ async def test_capture_pattern():
     try:
         import sys
         import os
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'custom_components'))
+        test_dir = os.path.dirname(__file__)
+        paths_to_try = [
+            '/config/custom_components',  # HA container path
+            os.path.join(test_dir, '..', 'custom_components'),
+            '/workspace/custom_components',
+            os.path.join(os.path.dirname(test_dir), 'custom_components'),
+        ]
+        for path in paths_to_try:
+            abs_path = os.path.abspath(path)
+            if os.path.exists(abs_path) and abs_path not in sys.path:
+                sys.path.insert(0, abs_path)
         from oelo_lights.pattern_utils import extract_pattern_from_zone_data
         
         zone_data = {
@@ -97,12 +119,9 @@ async def test_capture_pattern():
 
 
 async def test_rename_pattern(pattern):
-    """Test renaming a captured pattern.
+    """Test renaming captured pattern.
     
-    Validates:
-    - Pattern can be renamed (name field updated)
-    - Pattern ID remains unchanged after rename
-    - Rename operation preserves other pattern data
+    Validates name updates, ID unchanged, other data preserved.
     
     Args:
         pattern: Pattern dictionary from capture test
@@ -141,18 +160,9 @@ async def test_rename_pattern(pattern):
 
 
 async def test_apply_pattern(pattern):
-    """Test generating pattern application URL.
+    """Test applying pattern (URL generation only, no controller call).
     
-    Validates:
-    - Pattern URL is generated correctly
-    - URL contains required components:
-      - Controller IP address
-      - Zone number (zones=1)
-      - setPattern endpoint
-    - URL structure is valid for controller API
-    
-    Note: This test validates URL generation only and does NOT
-    send commands to the controller (which would change lights).
+    Validates URL generation from stored pattern data. Does not send commands.
     
     Args:
         pattern: Pattern dictionary to apply
@@ -167,7 +177,17 @@ async def test_apply_pattern(pattern):
     try:
         import sys
         import os
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'custom_components'))
+        test_dir = os.path.dirname(__file__)
+        paths_to_try = [
+            '/config/custom_components',  # HA container path
+            os.path.join(test_dir, '..', 'custom_components'),
+            '/workspace/custom_components',
+            os.path.join(os.path.dirname(test_dir), 'custom_components'),
+        ]
+        for path in paths_to_try:
+            abs_path = os.path.abspath(path)
+            if os.path.exists(abs_path) and abs_path not in sys.path:
+                sys.path.insert(0, abs_path)
         from oelo_lights.pattern_utils import build_pattern_url
         
         url = build_pattern_url(

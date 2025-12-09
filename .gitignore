@@ -5,6 +5,13 @@ config/
 # Test files (keep source, ignore copied)
 config/test/
 
+# Test output files
+test/*.log
+test/onboarding_*.json
+test/onboarding_*.html
+test/onboarding_*.png
+test/test_output.log
+
 # Python
 __pycache__/
 *.py[cod]

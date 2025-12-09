@@ -1,15 +1,22 @@
-.PHONY: help setup start stop restart logs clean test test-all
+.PHONY: help setup start stop restart logs clean test test-all status ps shell exec build
 
 help:
 	@echo "Oelo Lights HA Testing Makefile"
 	@echo ""
-	@echo "Available commands:"
+	@echo "Container Management:"
 	@echo "  make setup    - Set up test environment (copy integration files)"
 	@echo "  make start    - Start Home Assistant container"
 	@echo "  make stop     - Stop Home Assistant container"
 	@echo "  make restart  - Restart Home Assistant container"
+	@echo "  make status   - Show container status"
+	@echo "  make ps       - List containers (alias for status)"
 	@echo "  make logs     - View Home Assistant logs (follow mode)"
+	@echo "  make shell    - Open shell in HA container"
+	@echo "  make exec     - Execute command in HA container (usage: make exec CMD='command')"
+	@echo "  make build    - Build test container image"
 	@echo "  make clean    - Remove container and config directory"
+	@echo ""
+	@echo "Testing:"
 	@echo "  make test     - Run quick test (start, wait, check logs)"
 	@echo "  make test-all - Run complete test suite (all tests in order)"
 
@@ -48,9 +55,32 @@ restart:
 	@echo "Restarting Home Assistant..."
 	docker-compose restart
 
+status:
+	@echo "Container status:"
+	@docker-compose ps
+
+ps: status
+
 logs:
 	@echo "Viewing Home Assistant logs (Ctrl+C to exit)..."
-	docker-compose logs -f
+	@docker-compose logs -f
+
+shell:
+	@echo "Opening shell in HA container..."
+	@docker-compose exec homeassistant /bin/bash || docker-compose exec homeassistant /bin/sh
+
+exec:
+	@if [ -z "$(CMD)" ]; then \
+		echo "Usage: make exec CMD='command to run'"; \
+		echo "Example: make exec CMD='ls -la /config'"; \
+		exit 1; \
+	fi
+	@docker-compose exec homeassistant $(CMD)
+
+build:
+	@echo "Building test container image..."
+	@docker-compose build test
+	@echo "✓ Test container image built"
 
 clean:
 	@echo "Cleaning up..."
