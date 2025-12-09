@@ -1,0 +1,35 @@
+{
+  "button": {
+    "className": "",
+    "formId": null,
+    "hasOnClick": false,
+    "id": "",
+    "innerHTML": " <!--?lit$766173009$-->Log in ",
+    "outerHTML": "<ha-button variant=\"brand\" appearance=\"accent\" size=\"medium\"> <!--?lit$766173009$-->Log in </ha-button>",
+    "tagName": "HA-BUTTON",
+    "textContent": " Log in ",
+    "type": "button"
+  },
+  "form": {
+    "action": "http://localhost:8123/auth/authorize?response_type=code&redirect_uri=http%3A%2F%2Flocalhost%3A8123%2F%3Fauth_callback%3D1&client_id=http%3A%2F%2Flocalhost%3A8123%2F&state=eyJoYXNzVXJsIjoiaHR0cDovL2xvY2FsaG9zdDo4MTIzIiwiY2xpZW50SWQiOiJodHRwOi8vbG9jYWxob3N0OjgxMjMvIn0%3D",
+    "enctype": "application/x-www-form-urlencoded",
+    "hasOnSubmit": false,
+    "id": "",
+    "method": "get",
+    "outerHTML": "<form><!--?lit$766173009$--> <!--?lit$766173009$--> <h1> <!--?lit$766173009$-->Welcome home! </h1> <!--?lit$766173009$--> <!--?lit$766173009$--><ha-auth-form><!----> <style>ha-auth-form .root>*{display:block}ha-auth-form .root>:not([own-margin]):not(:last-child){margin-bottom:24px}ha-auth-form ha-alert[own-margin]{margin-bottom:4px}</style> <!--?lit$766173009$--> <div class=\"root\" part=\"root\"> <!--?lit$766173009$--> <!--?lit$766173009$--><!----> <!--?lit$766173009$--> <!--?lit$766173009$--><ha-auth-form-string own-margin=\"\"><!----> <style>ha-auth-form-string{display:block;position:relative}ha-auth-form-string[own-margin]{margin-bottom:5px}ha-auth-form-string ha-auth-textfield{display:block!important}ha-auth-form-string ha-icon-button{position:absolute;top:8px;right:8px;inset-inline-start:initial;inset-inline-end:8px;--mdc-icon-button-size:40px;--mdc-icon-size:20px;color:var(--secondary-text-color);direction:var(--direction)}</style> <ha-auth-textfield helperpersistent=\"\" autofocus=\"\"><"
+  },
+  "inputs": {
+    "password": {
+      "id": "",
+      "name": "password",
+      "outerHTML": "<input class=\"mdc-text-field__input\" aria-labelledby=\"password\" aria-controls=\"helper-text\" aria-describedby=\"helper-text\" type=\"password\" placeholder=\"\" required=\"\" name=\"password\" autocomplete=\"current-password\">",
+      "valueLength": 17
+    },
+    "username": {
+      "id": "",
+      "name": "username",
+      "outerHTML": "<input class=\"mdc-text-field__input\" aria-labelledby=\"username\" aria-controls=\"helper-text\" aria-describedby=\"helper-text\" type=\"text\" placeholder=\"\" required=\"\" name=\"username\" autofocus=\"\" autocomplete=\"username\">",
+      "value": "test_user"
+    }
+  }
+}

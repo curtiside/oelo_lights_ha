@@ -1,0 +1,10 @@
+INFO: http://localhost:8123/auth/authorize?response_type=code&redirect_uri=http%3A%2F%2Flocalhost%3A8123%2F%3Fauth_callback%3D1&client_id=http%3A%2F%2Flocalhost%3A8123%2F&state=eyJoYXNzVXJsIjoiaHR0cDovL2xvY2FsaG9zdDo4MTIzIiwiY2xpZW50SWQiOiJodHRwOi8vbG9jYWxob3N0OjgxMjMvIn0%3D - Autofocus processing was blocked because a document already has a focused element.
+INFO: console-api 10:24 "Username input value:" "test_user"
+INFO: console-api 11:24 "Password input length:" 17
+INFO: console-api 51:24 "Found" 2 "potential buttons"
+INFO: console-api 59:28 "Button" 0 ":" "text=\"Log in\"" "inner=\"Log in\"" "aria=\"\"" "type=button"
+INFO: console-api 59:28 "Button" 1 ":" "text=\"Help\"" "inner=\"Help\"" "aria=\"\"" "type=button"
+INFO: console-api 74:32 "Found login button, ensuring fields are set..."
+INFO: console-api 87:32 "Clicking login button..."
+INFO: console-api 103:36 "Clicking" "HA-BUTTON" "directly (as in Playwright example)..."
+INFO: console-api 121:36 "Direct click on" "HA-BUTTON" "completed"
