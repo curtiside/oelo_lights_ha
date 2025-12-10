@@ -13,4 +13,7 @@ services:
       - TZ=${TZ:-America/New_York}
     ports:
       - "8123:8123"
+    # HACS will be installed via docker exec after container starts
+    # See test_helpers.install_hacs_via_docker() or run manually:
+    # docker exec -it ha-test bash -c "wget -O - https://get.hacs.xyz | bash -"
 

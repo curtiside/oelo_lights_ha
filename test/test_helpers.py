@@ -279,47 +279,6 @@ def get_or_create_ha_token() -> Optional[str]:
     
     return None
 
-def get_or_create_ha_token() -> Optional[str]:
-    """Get HA token from environment or create from username/password.
-    
-    Checks in order:
-    1. HA_TOKEN environment variable (preferred)
-    2. HA_USERNAME + HA_PASSWORD → creates token automatically via WebSocket
-    
-    Returns:
-        Token string if available/created, None otherwise
-    """
-    # Check for existing token
-    token = os.environ.get("HA_TOKEN")
-    if token:
-        return token
-    
-    # Check for username/password
-    username = os.environ.get("HA_USERNAME")
-    password = os.environ.get("HA_PASSWORD")
-    
-    if username and password:
-        print("  No HA_TOKEN found, but HA_USERNAME/HA_PASSWORD provided", flush=True)
-        sys.stdout.flush()
-        print("  Attempting to create token automatically...", flush=True)
-        sys.stdout.flush()
-        try:
-            import asyncio
-            token = asyncio.run(create_token_from_credentials(username, password))
-            if token:
-                os.environ["HA_TOKEN"] = token
-                return token
-            else:
-                print("  ⚠️  Token creation returned None", flush=True)
-                sys.stdout.flush()
-        except Exception as e:
-            print(f"  ⚠️  Failed to create token: {e}", flush=True)
-            sys.stdout.flush()
-            import traceback
-            traceback.print_exc()
-    
-    return None
-
 def stop_container(project_dir: str) -> bool:
     """Stop and remove HA container.
     
@@ -578,11 +537,12 @@ def wait_for_container_ready(max_wait: int = 120) -> bool:
     return False
 
 
-def wait_for_ha_ready(max_wait: int = 180) -> bool:
-    """Wait for HA API to respond.
+def wait_for_ha_ready(max_wait: int = 180, install_hacs: bool = True) -> bool:
+    """Wait for HA API to respond and optionally install HACS.
     
     Args:
         max_wait: Maximum seconds to wait
+        install_hacs: If True, install HACS after HA is ready (default: True)
         
     Returns:
         True when HA is ready, False on timeout
@@ -593,6 +553,11 @@ def wait_for_ha_ready(max_wait: int = 180) -> bool:
             resp = requests.get(f"{HA_URL}/api/", timeout=2)
             if resp.status_code in [200, 401]:
                 print(f"✓ Home Assistant is ready (after {i*2} seconds)")
+                
+                # Install HACS if requested
+                if install_hacs:
+                    install_hacs_via_docker()
+                
                 return True
         except requests.exceptions.ConnectionError:
             # HA not started yet

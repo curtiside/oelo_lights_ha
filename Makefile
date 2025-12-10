@@ -1,10 +1,11 @@
-.PHONY: help setup start stop restart logs clean test test-all status ps shell exec
+.PHONY: help setup build start stop restart logs clean test test-all status ps shell exec
 
 help:
 	@echo "Oelo Lights HA Testing Makefile"
 	@echo ""
 	@echo "Container Management:"
 	@echo "  make setup    - Set up test environment (copy integration files)"
+	@echo "  make build    - Pull latest Home Assistant image"
 	@echo "  make start    - Start Home Assistant container"
 	@echo "  make stop     - Stop Home Assistant container"
 	@echo "  make restart  - Restart Home Assistant container"
@@ -38,6 +39,11 @@ setup:
 		echo "✓ .env file created (edit if needed)"; \
 	fi
 	@echo "Setup complete!"
+
+build:
+	@echo "Pulling latest Home Assistant image..."
+	@docker-compose pull homeassistant
+	@echo "✓ Image pulled successfully"
 
 start:
 	@echo "Starting Home Assistant..."
@@ -92,8 +98,8 @@ test:
 	@echo "Running quick test..."
 	@make setup
 	@make start
-	@echo "Waiting 30 seconds for Home Assistant to start..."
-	@sleep 30
+	@echo "Waiting for Home Assistant to start..."
+	@python3 -c "from test.test_helpers import wait_for_ha_ready, install_hacs_via_docker; wait_for_ha_ready(install_hacs=True)"
 	@echo "Checking logs for errors..."
 	@docker-compose logs --tail 50 | grep -i error || echo "No errors found in recent logs"
 	@echo "Test complete! Check http://localhost:8123"
@@ -103,7 +109,7 @@ test-all:
 	@echo "Running complete test suite..."
 	@make setup
 	@make start
-	@echo "Waiting for Home Assistant to be ready..."
-	@sleep 60
+	@echo "Waiting for Home Assistant to be ready and installing HACS..."
+	@python3 -c "from test.test_helpers import wait_for_ha_ready; wait_for_ha_ready(install_hacs=True)"
 	@python3 test/run_all_tests.py
 
