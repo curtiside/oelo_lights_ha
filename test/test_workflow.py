@@ -12,9 +12,11 @@ Usage:
 Test Workflow:
     1. Capture pattern from Zone 1 (must be ON with pattern)
     2. Extract pattern name from controller response
-    3. Rename pattern (modify name)
-    4. Generate apply URL with renamed pattern
-    5. Verify URL format and parameters
+    3. Save pattern to storage
+    4. Rename pattern using storage API
+    5. Verify renamed pattern is visible in pattern list
+    6. Generate apply URL with renamed pattern
+    7. Verify URL format and parameters
 
 Prerequisites:
     - Zone 1 must be ON with pattern set on controller
@@ -119,9 +121,13 @@ async def test_capture_pattern():
 
 
 async def test_rename_pattern(pattern):
-    """Test renaming captured pattern.
+    """Test renaming captured pattern with actual storage.
     
-    Validates name updates, ID unchanged, other data preserved.
+    Validates:
+    1. Pattern is saved to storage
+    2. Pattern is renamed using storage API
+    3. Renamed pattern is visible in pattern list
+    4. ID unchanged, other data preserved
     
     Args:
         pattern: Pattern dictionary from capture test
@@ -136,26 +142,102 @@ async def test_rename_pattern(pattern):
     try:
         import sys
         import os
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'custom_components'))
+        from unittest.mock import AsyncMock, MagicMock
         
-        # Test rename logic by manipulating pattern dict directly
-        # (avoiding Store initialization complexity)
-        pattern_copy = pattern.copy()
-        original_id = pattern_copy.get('id')
-        original_name = pattern_copy.get('name')
+        test_dir = os.path.dirname(__file__)
+        paths_to_try = [
+            '/config/custom_components',  # HA container path
+            os.path.join(test_dir, '..', 'custom_components'),
+            '/workspace/custom_components',
+            os.path.join(os.path.dirname(test_dir), 'custom_components'),
+        ]
+        for path in paths_to_try:
+            abs_path = os.path.abspath(path)
+            if os.path.exists(abs_path) and abs_path not in sys.path:
+                sys.path.insert(0, abs_path)
         
-        # Simulate rename: update name, keep id
-        pattern_copy['name'] = "Test Renamed Pattern"
+        from oelo_lights.pattern_storage import PatternStorage
         
-        # Verify rename logic
-        if pattern_copy.get('id') == original_id and pattern_copy.get('name') == "Test Renamed Pattern":
-            print("✓ Rename pattern: OK")
-            return True, pattern_copy
-        else:
-            print("✗ Rename pattern: FAILED (verification failed)")
+        # Create a mock Home Assistant instance for storage
+        mock_hass = MagicMock()
+        mock_store = MagicMock()
+        mock_store.async_load = AsyncMock(return_value=None)
+        mock_store.async_save = AsyncMock()
+        
+        # Create storage instance with test entry ID
+        storage = PatternStorage(mock_hass, "test_entry_workflow")
+        storage.store = mock_store
+        storage._patterns = []  # Start with empty patterns
+        
+        original_id = pattern.get('id')
+        original_name = pattern.get('name')
+        new_name = "Test Renamed Pattern"
+        
+        # Step 1: Add pattern to storage
+        print("  Adding pattern to storage...")
+        added = await storage.async_add_pattern(pattern)
+        if not added:
+            print("✗ Rename pattern: FAILED (could not add pattern to storage)")
             return False, None
+        
+        # Step 2: Verify pattern was added
+        patterns_before = await storage.async_list_patterns()
+        pattern_found = False
+        for p in patterns_before:
+            if p.get('id') == original_id:
+                pattern_found = True
+                if p.get('name') != original_name:
+                    print(f"✗ Rename pattern: FAILED (pattern name mismatch: expected '{original_name}', got '{p.get('name')}')")
+                    return False, None
+                break
+        
+        if not pattern_found:
+            print("✗ Rename pattern: FAILED (pattern not found in storage after add)")
+            return False, None
+        
+        # Step 3: Rename the pattern
+        print(f"  Renaming pattern from '{original_name}' to '{new_name}'...")
+        renamed = await storage.async_rename_pattern(pattern_id=original_id, new_name=new_name)
+        if not renamed:
+            print("✗ Rename pattern: FAILED (rename operation returned False)")
+            return False, None
+        
+        # Step 4: Verify rename is visible in pattern list
+        patterns_after = await storage.async_list_patterns()
+        renamed_pattern = None
+        for p in patterns_after:
+            if p.get('id') == original_id:
+                renamed_pattern = p
+                break
+        
+        if not renamed_pattern:
+            print("✗ Rename pattern: FAILED (pattern not found in storage after rename)")
+            return False, None
+        
+        # Step 5: Validate rename results
+        if renamed_pattern.get('id') != original_id:
+            print(f"✗ Rename pattern: FAILED (ID changed: expected '{original_id}', got '{renamed_pattern.get('id')}')")
+            return False, None
+        
+        if renamed_pattern.get('name') != new_name:
+            print(f"✗ Rename pattern: FAILED (name not updated: expected '{new_name}', got '{renamed_pattern.get('name')}')")
+            return False, None
+        
+        # Verify other data preserved
+        if renamed_pattern.get('url_params') != pattern.get('url_params'):
+            print("✗ Rename pattern: FAILED (url_params changed)")
+            return False, None
+        
+        print(f"✓ Rename pattern: OK (saved and verified in pattern list)")
+        print(f"  Original name: '{original_name}'")
+        print(f"  New name: '{new_name}'")
+        print(f"  Pattern ID: '{original_id}' (unchanged)")
+        return True, renamed_pattern
+        
     except Exception as e:
+        import traceback
         print(f"✗ Rename pattern: FAILED ({e})")
+        traceback.print_exc()
         return False, None
 
 
