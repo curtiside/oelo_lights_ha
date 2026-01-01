@@ -280,7 +280,7 @@ async def async_delete_pattern(hass: HomeAssistant, call: ServiceCall) -> None:
         raise HomeAssistantError("Failed to delete pattern (pattern not found)")
 
 
-async def async_list_patterns(hass: HomeAssistant, call: ServiceCall) -> None:
+async def async_list_patterns(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
     """List all saved effects."""
     entity_id = call.data.get("entity_id")
     
@@ -297,7 +297,8 @@ async def async_list_patterns(hass: HomeAssistant, call: ServiceCall) -> None:
     patterns = await storage.async_list_patterns()
     
     _LOGGER.info("Listed %d patterns for entry %s", len(patterns), entry_id)
-    # Note: Service results are logged, not returned directly in Home Assistant
+    # Return patterns for frontend consumption
+    return {"patterns": patterns}
 
 
 def async_register_services(hass: HomeAssistant) -> None:
