@@ -280,8 +280,8 @@ async def async_delete_pattern(hass: HomeAssistant, call: ServiceCall) -> None:
         raise HomeAssistantError("Failed to delete pattern (pattern not found)")
 
 
-async def async_list_patterns(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
-    """List all saved effects."""
+async def _async_list_patterns_impl(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
+    """List all saved effects - implementation."""
     entity_id = call.data.get("entity_id")
     
     if not entity_id:
@@ -299,6 +299,12 @@ async def async_list_patterns(hass: HomeAssistant, call: ServiceCall) -> dict[st
     _LOGGER.info("Listed %d patterns for entry %s", len(patterns), entry_id)
     # Return patterns for frontend consumption
     return {"patterns": patterns}
+
+
+async def async_list_patterns(call: ServiceCall) -> dict[str, Any]:
+    """List all saved effects - wrapper for service registration."""
+    hass = call.hass
+    return await _async_list_patterns_impl(hass, call)
 
 
 def async_register_services(hass: HomeAssistant) -> None:
