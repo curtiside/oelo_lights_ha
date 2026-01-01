@@ -280,8 +280,8 @@ async def async_delete_pattern(hass: HomeAssistant, call: ServiceCall) -> None:
         raise HomeAssistantError("Failed to delete pattern (pattern not found)")
 
 
-async def _async_list_patterns_impl(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
-    """List all saved effects - implementation."""
+async def async_list_patterns(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
+    """List all saved effects."""
     entity_id = call.data.get("entity_id")
     
     if not entity_id:
@@ -299,12 +299,6 @@ async def _async_list_patterns_impl(hass: HomeAssistant, call: ServiceCall) -> d
     _LOGGER.info("Listed %d patterns for entry %s", len(patterns), entry_id)
     # Return patterns for frontend consumption
     return {"patterns": patterns}
-
-
-async def async_list_patterns(call: ServiceCall) -> dict[str, Any]:
-    """List all saved effects - wrapper for service registration."""
-    hass = call.hass
-    return await _async_list_patterns_impl(hass, call)
 
 
 def async_register_services(hass: HomeAssistant) -> None:
@@ -374,10 +368,14 @@ def async_register_services(hass: HomeAssistant) -> None:
         }),
     )
     
+    # Create wrapper function to ensure correct signature
+    async def _list_patterns_wrapper(call: ServiceCall) -> dict[str, Any]:
+        return await async_list_patterns(hass, call)
+    
     hass.services.async_register(
         DOMAIN,
         SERVICE_LIST_EFFECTS,
-        async_list_patterns,
+        _list_patterns_wrapper,
         schema=vol.Schema({
             vol.Required("entity_id"): str,
         }),
@@ -387,7 +385,7 @@ def async_register_services(hass: HomeAssistant) -> None:
     hass.services.async_register(
         DOMAIN,
         "list_patterns",
-        async_list_patterns,
+        _list_patterns_wrapper,
         schema=vol.Schema({
             vol.Required("entity_id"): str,
         }),
